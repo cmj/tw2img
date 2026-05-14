@@ -496,6 +496,7 @@ async def main():
     p.add_argument("--css",       default=None, help="Supply custom Nitter or similar css file")
     p.add_argument("--html-only", action="store_true", help="Print HTML to stdout instead of rendering PNG")
     p.add_argument("--save-html", help="Save HTML to this file instead of rendering PNG")
+    p.add_argument("--dump-json", action="store_true", help="Print raw API JSON to stdout and exit")
     p.add_argument("--auth-token",default=os.environ.get("TWITTER_AUTH_TOKEN"), help="or use envar TWITTER_AUTH_TOKEN")
     p.add_argument("--csrf-token",default=os.environ.get("TWITTER_CSRF_TOKEN"), help="or use envar TWITTER_CSRF_TOKEN")
     args = p.parse_args()
@@ -520,6 +521,10 @@ async def main():
             if not args.auth_token or not args.csrf_token:
                 sys.exit("Error: --auth-token/--csrf-token required (or use --guest)")
             data = fetch_tweet_detail(tweet_id, args.auth_token, args.csrf_token)
+
+    if args.dump_json:
+        print(json.dumps(data, indent=2))
+        return
 
     fid = None
     if not os.path.isfile(inp):
