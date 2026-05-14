@@ -253,8 +253,6 @@ def media_html(ext_entities):
         </div>'''
     else:
         return f'<div class="media-row">{"".join(parts)}</div>'
-#
-#"retweet": ("M714 11q0-7-5-13t-13-5h-535q-5 0-8 1t-5 4-3 4-2 7 0 6v335h-107q-15 0-25 11t-11 25q0 13 823l179 214q11 12 27 12t28-12l178-214q9-10 9-23 0-15-11-25t-25-11h-107v-214h321q9 0 14-6l89-108q4-5 4-11z m357 250q0-15-11-25t-25-11h-107v-214h-180v214h-107q-15 0-25 11t-10 25q0 13 8 23l178 214q11 12 28 12t27-12l179-214q8-10 8-23z", 1071),
 GLYPHS = {
     "comment": ("M1000 350q0-97-67-179t-182-130-251-48q-39 0-81 4-110-97-257-135-27-8-63-12-10-1-17 5t-10 16v1q-2 2 0 6t1 6 2 5l4 5t4 5 4 5q4 5 17 19t20 22 17 22 18 28 15 33 15 42q-88 50-138 123t-51 157q0 73 40 139t109 115 163 76 197 28q135 0 251-48t182-130 67-179z", 1000),
     "retweet": ("M714 11q0-7-5-13t-13-5h-535q-5 0-8 1t-5 4-3 4-2 7 0 6v335h-107q-15 0-25 11t-11 25q0 13 8 23l179 214q11 12 27 12t28-12l178-214q9-10 9-23 0-15-11-25t-25-11h-107v-214h321q9 0 14-6l89-108q4-5 4-11z m357 232q0-13-8-23l-178-214q-12-13-28-13t-27 13l-179 214q-8 10-8 23 0 14 11 25t25 11h107v214h-322q-9 0-14 7l-89 107q-4 5-4 11 0 7 5 12t13 6h536q4 0 7-1t5-4 3-5 2-6 1-7v-334h107q14 0 25-11t10-25z", 1071),
@@ -490,7 +488,7 @@ async def render_png(html, output_path, width=598, retina=True):
 async def main():
     p = argparse.ArgumentParser(description="Render tweet as PNG via Playwright")
     p.add_argument("input",       help="Tweet ID, URL, JSON file, or - for stdin")
-    p.add_argument("output",      nargs="?", help="Output PNG (default: <id>.png)")
+    p.add_argument("output",      nargs="?", help="Output PNG (default: <screen_name>-<id>.png)")
     p.add_argument("--light",     action="store_true", help="Render image in light mode")
     p.add_argument("--no-source", action="store_true", help="Hide the device name used (iPhone, etc)")
     p.add_argument("--no-context",action="store_true", help="Only show focal tweet, no thread")
@@ -549,7 +547,8 @@ async def main():
         tweets = [tweets[-1]]
 
     tweet_id = tweets[-1]["id"]
-    output   = args.output or f"{tweet_id}.png"
+    user_name = tweets[-1]["user"]["screen_name"]
+    output = args.output or f"{user_name}-{tweet_id}.png"
 
     html = build_html(tweets, light=args.light, no_source=args.no_source, css_path=args.css, width=args.width)
 
