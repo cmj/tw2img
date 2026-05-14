@@ -513,7 +513,7 @@ async def main():
         with open(inp) as f:
             data = json.load(f)
     else:
-        m = re.search(r"(\d{10,})", inp)
+        m = re.search(r"(\d+)", inp)
         if not m: sys.exit(f"Error: cannot parse tweet ID from: {inp}")
         tweet_id = m.group(1)
 
@@ -531,7 +531,7 @@ async def main():
 
     fid = None
     if not os.path.isfile(inp):
-        m = re.search(r"(\d{10,})", inp)
+        m = re.search(r"(\d+)", inp)
         if m: fid = m.group(1)
 
     if "threaded_conversation_with_injections_v2" in data.get("data", {}):
