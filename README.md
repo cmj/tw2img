@@ -2,7 +2,7 @@
 
 A tool that renders tweets as PNG images using Playwright (headless Chromium). Works with tweet IDs, URLs, local JSON files, or stdin.
 
-| ![image grid](img/2041557036274475228-nasa.png) | ![birdwatch note](img/1776318841221521692-note.png) |
+| ![image grid](img/2041557036274475228-nasa.png) | ![birdwatch note](img/1819083423077880215-note.png) |
 |---------------------------------|----------------------|
 
 ## Installation
