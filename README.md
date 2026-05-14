@@ -56,6 +56,7 @@ python tw2img.py 2054583770045386950
 | `--css custom.css` | Use custom CSS file |
 | `--html-only` | Print HTML to stdout instead of rendering PNG |
 | `--save-html` | Save HTML to this file instead of rendering PNG |
+| `--dump-json` | Print raw API JSON to stdout and exit |
 
 ## Input Types
 
