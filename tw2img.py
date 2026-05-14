@@ -2,7 +2,8 @@
 """
 tw2img.py - render a tweet as PNG using Playwright
 
-Requirements: playwright (pip install playwright; playwright install chromium)
+Requirements: playwright only needed for PNG output
+    pip install playwright && playwright install chromium
 
 Usage:
     tw2img.py <id|url|json|-> [output.png] [options]
@@ -17,7 +18,6 @@ Notes:
 import sys, json, re, os, argparse, asyncio, tempfile, urllib.request, urllib.parse
 from datetime import datetime, timezone
 from pathlib import Path
-from playwright.async_api import async_playwright
 
 BEARER = "AAAAAAAAAAAAAAAAAAAAANRILgAAAAAAnNwIzUejRCOuH5E6I8xnZz4puTs%3D1Zv7ttfk8LF81IUq16cHjhLTvJu4FA33AGWWjCpTnA"
 UA = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
@@ -466,6 +466,11 @@ body {{ width: {width}px; }}
 </body></html>"""
 
 async def render_png(html, output_path, width=598, retina=True):
+    try:
+        from playwright.async_api import async_playwright
+    except ImportError:
+        sys.exit("Error: playwright is required for PNG rendering.\n"
+                 "Install it with: pip install playwright && playwright install chromium")
     async with async_playwright() as p:
         browser = await p.chromium.launch(args=["--no-sandbox"])
         context = await browser.new_context(viewport={'width': width, 'height': 800})
