@@ -23,7 +23,7 @@ BEARER = "AAAAAAAAAAAAAAAAAAAAANRILgAAAAAAnNwIzUejRCOuH5E6I8xnZz4puTs%3D1Zv7ttfk
 UA = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
 
 TWEET_DETAIL_URL    = "https://x.com/i/api/graphql/xIYgDwjboktoFeXe_fgacw/TweetDetail"
-TWEET_RESULT_URL    = "https://api.twitter.com/graphql/7xflPyRiUxGVbJd4uWmbfg/TweetResultByRestId"
+TWEET_RESULT_URL    = "https://api.twitter.com/graphql/2Acdg-VztGlHX7MjX67Ysw/TweetResultByRestId"
 GUEST_TOKEN_URL     = "https://api.twitter.com/1.1/guest/activate.json"
 
 TWEET_DETAIL_VARS   = lambda id: {"focalTweetId": id, "with_rux_injections": True,
@@ -179,6 +179,9 @@ def parse_tweet_detail(data, focal_id):
 
 def parse_tweet_result_single(data):
     result = data["data"]["tweetResult"]["result"]
+    if result.get("__typename") == "TweetTombstone":
+        msg = result.get("tombstone", {}).get("text", {}).get("text", "This tweet is unavailable.")
+        sys.exit(f"Error: {msg}")
     return [_parse_tweet_result(result, _parse_user)]
 
 def fmt(n):
