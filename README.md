@@ -2,7 +2,7 @@
 
 A tool that renders tweets as PNG images using Playwright (headless Chromium). Works with tweet IDs, URLs, local JSON files, or stdin.
 
-| ![image grid](img/2041557036274475228-nasa.png) | ![birdwatch note](img/1819083423077880215-note.png) |
+| ![image grid](img/2041557036274475228-nasa.png) | ![birdwatch note and thread](img/1819250493442695340-note.png) |
 |---------------------------------|----------------------|
 
 ## Installation
@@ -15,7 +15,7 @@ playwright install chromium
 
 ## Quick Start
 
-### 1. Guest Mode (no login required — limited, missing context for replies)
+### 1. Guest Mode (no login required, missing context for replies)
 
 ```bash
 # By tweet ID
@@ -76,7 +76,7 @@ cat tweet.json | python tw2img.py -
 
 ## Output
 
-By default, saves as `<tweet_id>.png` in current directory. Specify custom output:
+By default, saves as `<screen_name>-<tweet_id>.png` in current directory. Specify custom output:
 
 ```bash
 python tw2img.py 2054583770045386950 --guest my_screenshot.png
