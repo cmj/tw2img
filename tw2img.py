@@ -275,8 +275,8 @@ def verified_svg(verified_type, is_blue):
     elif verified_type == "Government": fill = "#829aab"
     else: return ""
     # 'stroke' is checkmark color, going with black instead of white for better contrast
-    return (f'<svg width="16" height="16" viewBox="0 0 18 18" xmlns="http://www.w3.org/2000/svg" '
-            f'style="display:inline-block;vertical-align:middle;margin:0 1px 2px">'
+    return (f'<svg width="11" height="11" viewBox="0 0 18 18" xmlns="http://www.w3.org/2000/svg" '
+            f'style="display:inline-block;vertical-align:middle;margin:0 0 4px 4px">'
             f'<circle cx="9" cy="9" r="9" fill="{fill}"/>'
             f'<polyline points="4.5,9 7.5,12 13.5,6" stroke="black" stroke-width="2.2" '
             f'fill="none" stroke-linecap="round" stroke-linejoin="round"/></svg>')
@@ -289,6 +289,7 @@ body {
     --grey:    #8899A6;
     --border:  #38444D;
     --link:    #80CEFF;
+    --acc:     #2B608A;
     --play:    #3B5F78;
     --qt-bg:   #1e2732;
     --bw-bg:   #1a2a3a;
@@ -309,6 +310,7 @@ body {
     --grey:    #536471;
     --border:  #cfd9de;
     --link:    #1d9bf0;
+    --acc:     #cfd9de;
     --play:    #1d9bf0;
     --qt-bg:   #f7f9f9;
     --bw-bg:   #e8f5fd;
@@ -327,22 +329,22 @@ SHARED_CSS = """
 .tweet-row:last-child { padding-bottom: 14px; }
 .left-col { display: flex; flex-direction: column; align-items: center; flex-shrink: 0; width: 46px; margin-right: 10px; }
 .avatar { width: 46px; height: 46px; border-radius: 23px; display: block; }
-.thread-line { width: 2px; flex: 1; min-height: 6px; background: var(--border); margin: 3px 0; }
+.thread-line { width: 2px; flex: 1; min-height: 6px; background: var(--acc); margin: 3px 0; }
 .right-col { flex: 1; overflow: hidden; padding-bottom: 12px; }
 .tweet-row:last-child .right-col { padding-bottom: 0; }
 .tweet-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 1px; }
 .tweet-header-left { display: flex; align-items: center; flex-wrap: wrap; flex: 1; overflow: hidden; }
-.tweet-header-left > * { margin-right: 3px; }
+.tweet-header-left > * { margin-right: 0; }
 .fullname { font-weight: 700; font-size: 15px; white-space: nowrap; }
-.username { color: var(--grey); font-size: 14px; white-space: nowrap; }
+.username { color: var(--grey); font-size: 14px; white-space: nowrap; padding-left: 4px; }
 .tweet-time { color: var(--grey); font-size: 14px; white-space: nowrap; flex-shrink: 0; margin-left: 8px; }
 .replying-to { color: var(--grey); font-size: 13px; margin-bottom: 3px; line-height: 1.4; }
-.tweet-content { font-size: 15px; line-height: 1.5; margin: 4px 0 8px; white-space: pre-wrap; word-wrap: break-word; }
+.tweet-content { font-size: 15px; line-height: 1.5; margin: 4px 0 0; white-space: pre-wrap; word-wrap: break-word; }
 .focal .tweet-content { font-size: 17px; }
-.focal .tweet-date { color: var(--grey); font-size: 13px; margin-bottom: 8px; padding-top: 8px; }
+.focal .tweet-date { color: var(--grey); font-size: 13px; margin-bottom: 0; padding-top: 6px; }
 .stats { display: flex; align-items: center; color: var(--grey); font-size: 13px; padding-top: 8px; }
-.stat { display: flex; align-items: center; white-space: nowrap; margin-right: 14px; }
-.stat svg { margin-right: 4px; }
+.stat { display: flex; white-space: nowrap; margin-right: 14px; }
+.stat svg { margin: 3px 4px 4px; }
 .source { margin-left: auto; font-size: 12px; }
 .media-row { display: flex; margin: 6px 0; border-radius: 10px; overflow: hidden; }
 .media-row .attachment { flex: 1; }
@@ -359,8 +361,8 @@ SHARED_CSS = """
 .quote-header { display: flex; align-items: center; flex-wrap: wrap; margin-bottom: 4px; }
 .quote-header > * { margin-right: 4px; }
 .quote-avatar { width: 20px; height: 20px; border-radius: 10px; display: inline-block; }
-.quote-name { font-weight: 700; font-size: 14px; }
-.quote-sn { color: var(--grey); font-size: 13px; }
+.quote-name { font-weight: 700; font-size: 14px; margin-right: 0; }
+.quote-sn { color: var(--grey); font-size: 13px; padding-left: 4px; }
 .quote-time { color: var(--grey); font-size: 13px; margin-left: auto; }
 .quote-text { font-size: 14px; line-height: 1.45; white-space: pre-wrap; word-wrap: break-word; }
 .quote-media { margin-top: 6px; border-radius: 8px; overflow: hidden; }
