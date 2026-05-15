@@ -137,6 +137,10 @@ def _parse_tweet_result(result, user_parser):
     rt_id = leg.get("retweeted_status_id_str")
     bw = result.get("birdwatch_pivot") or {}
     bw_note = bw.get("note", {}).get("text") or bw.get("subtitle", {}).get("text") or ""
+    bw_ents = bw.get("note", {}).get("entities") or bw.get("subtitle", {}).get("entities") or []
+    # Strip help.x.com links — appears as bare display URL (no protocol, may end with …)
+    bw_note = re.sub(r'\s*https?://help\.x\.com\S*', '', bw_note)
+    bw_note = re.sub(r'\s*help\.x\.com\S*', '', bw_note)
 
     return {
         "id":              result.get("rest_id"),
@@ -157,6 +161,7 @@ def _parse_tweet_result(result, user_parser):
         "is_rt":           bool(rt_id),
         "quoted":          quoted,
         "birdwatch":       bw_note,
+        "birdwatch_ents":  bw_ents,
     }
 
 def parse_tweet_detail(data, focal_id):
@@ -423,9 +428,20 @@ def tweet_row_html(t, is_parent=False, no_source=False):
     qt_html = quote_block_html(t["quoted"]) if t.get("quoted") else ""
     bw_html = ""
     if t.get("birdwatch"):
+        bw_text = t["birdwatch"]
+        # Linkify non-help.x.com URLs in the note using entity indices (process in reverse)
+        ents = sorted([e for e in t.get("birdwatch_ents", [])
+                       if "help.x.com" not in (e.get("ref", {}).get("url") or "")],
+                      key=lambda e: e.get("fromIndex", 0), reverse=True)
+        for e in ents:
+            start, end = e.get("fromIndex"), e.get("toIndex")
+            url = e.get("ref", {}).get("url", "")
+            if start is not None and end is not None and url:
+                token = bw_text[start:end]
+                bw_text = bw_text[:start] + f'<a href="{url}">{token}</a>' + bw_text[end:]
         bw_html = f'''<div class="birdwatch">
           <div class="community-note-header"><span class="icon-container">{icon_svg("group", 13, "var(--accent)")}</span> Community Note</div>
-          <div class="community-note-text">{t["birdwatch"]}</div>
+          <div class="community-note-text">{bw_text}</div>
         </div>'''
     src = "" if no_source else f'<span class="source">{t["source"]}</span>'
     stats = f"""<div class="stats">
