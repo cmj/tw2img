@@ -271,15 +271,15 @@ def icon_svg(name, size=13, color="currentColor"):
             f'<g transform="scale(1,-1) translate(0,-850)"><path d="{d}" fill="{color}"/></g></svg>')
 
 def verified_svg(verified_type, is_blue):
-    if is_blue and not verified_type:   fill = "#1d9bf0"
-    elif verified_type == "Business":   fill = "#e7b332"
-    elif verified_type == "Government": fill = "#829aab"
+    if is_blue and not verified_type:   fill, stroke = "#1d9bf0", "white"
+    elif verified_type == "Business":   fill, stroke = "#e7b332", "black"
+    elif verified_type == "Government": fill, stroke = "#829aab", "black"    
     else: return ""
     # 'stroke' is checkmark color, going with black instead of white for better contrast
-    return (f'<svg width="11" height="11" viewBox="0 0 18 18" xmlns="http://www.w3.org/2000/svg" '
+    return (f'<svg width="12" height="12" viewBox="0 0 18 18" xmlns="http://www.w3.org/2000/svg" '
             f'style="display:inline-block;vertical-align:middle;margin:0 0 4px 4px">'
             f'<circle cx="9" cy="9" r="9" fill="{fill}"/>'
-            f'<polyline points="4.5,9 7.5,12 13.5,6" stroke="black" stroke-width="2.2" '
+            f'<polyline points="4.5,10 7.5,13 13.5,7" stroke="{stroke}" stroke-width="2.2" '
             f'fill="none" stroke-linecap="round" stroke-linejoin="round"/></svg>')
 
 DARK_CSS = """
