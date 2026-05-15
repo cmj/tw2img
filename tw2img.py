@@ -150,6 +150,7 @@ def _parse_tweet_result(result, user_parser):
         "quote_count":     leg.get("quote_count", 0),
         "like_count":      leg.get("favorite_count", 0),
         "view_count":      result.get("views", {}).get("count", 0),
+        "source":          re.sub(r"<[^>]+>", "", result.get("source", "")),
         "source":          re.sub(r"(?i)^twitter\s+for\s+|^twitter\s*", "", re.sub(r"<[^>]+>", "", result.get("source", ""))),
         "in_reply_to_id":  leg.get("in_reply_to_status_id_str", ""),
         "in_reply_to_sn":  leg.get("in_reply_to_screen_name", ""),
@@ -292,8 +293,10 @@ body {
     --acc:     #2B608A;
     --play:    #3B5F78;
     --qt-bg:   #1e2732;
-    --bw-bg:   #1a2a3a;
-    --bw-fg:   #80CEFF;
+    --bw-bg:   #1c1f23;
+    --bw-fg:   #5a6472;
+    --bg-hover: #22262b;
+    --accent:  #80CEFF;
     background: var(--bg);
     color: var(--fg);
     font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
@@ -306,15 +309,17 @@ LIGHT_CSS = """
 * { box-sizing: border-box; margin: 0; padding: 0; }
 body {
     --bg:      #ffffff;
-    --fg: #0f1419;
+    --fg:      #0f1419;
     --grey:    #536471;
     --border:  #cfd9de;
     --link:    #1d9bf0;
     --acc:     #cfd9de;
     --play:    #1d9bf0;
     --qt-bg:   #f7f9f9;
-    --bw-bg:   #e8f5fd;
-    --bw-fg:   #1d9bf0;
+    --bw-bg:   #f0f2f4;
+    --bw-fg:   #536471;
+    --bg-hover: #e7eaed;
+    --accent:  #1d9bf0;
     background: var(--bg);
     color: var(--fg);
     font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
@@ -367,9 +372,10 @@ SHARED_CSS = """
 .quote-text { font-size: 14px; line-height: 1.45; white-space: pre-wrap; word-wrap: break-word; }
 .quote-media { margin-top: 6px; border-radius: 8px; overflow: hidden; }
 .quote-media img { width: 100%; display: block; }
-.birdwatch { border: 1px solid var(--bw-fg); border-radius: 10px; padding: 10px 12px; margin: 6px 0; background: var(--bw-bg); }
-.bw-header { font-weight: 700; font-size: 13px; color: var(--bw-fg); margin-bottom: 4px; }
-.bw-text { font-size: 13px; line-height: 1.45; color: var(--fg); }
+.birdwatch { border: 1px solid var(--border); border-radius: 10px; margin: 6px 0; background: var(--bw-bg); overflow: hidden; }
+.community-note-header { background-color: var(--bg-hover); font-weight: 700; font-size: 13px; padding: 6px 10px 8px; display: flex; align-items: center; gap: 12px; color: var(--fg); }
+.community-note-header .icon-container { flex-shrink: 0; color: var(--accent); }
+.community-note-text { font-size: 13px; line-height: 1.45; color: var(--fg); white-space: pre-line; padding: 6px 10px 10px; }
 """
 
 def quote_block_html(qt):
@@ -418,8 +424,8 @@ def tweet_row_html(t, is_parent=False, no_source=False):
     bw_html = ""
     if t.get("birdwatch"):
         bw_html = f'''<div class="birdwatch">
-          <div class="bw-header">{icon_svg("group", 13, grey)} Community Note</div>
-          <div class="bw-text">{t["birdwatch"]}</div>
+          <div class="community-note-header"><span class="icon-container">{icon_svg("group", 13, "var(--accent)")}</span> Community Note</div>
+          <div class="community-note-text">{t["birdwatch"]}</div>
         </div>'''
     src = "" if no_source else f'<span class="source">{t["source"]}</span>'
     stats = f"""<div class="stats">
