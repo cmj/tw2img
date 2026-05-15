@@ -150,7 +150,7 @@ def _parse_tweet_result(result, user_parser):
         "quote_count":     leg.get("quote_count", 0),
         "like_count":      leg.get("favorite_count", 0),
         "view_count":      result.get("views", {}).get("count", 0),
-        "source":          re.sub(r"<[^>]+>", "", result.get("source", "")),
+        "source":          re.sub(r"(?i)^twitter\s+for\s+|^twitter\s*", "", re.sub(r"<[^>]+>", "", result.get("source", ""))),
         "in_reply_to_id":  leg.get("in_reply_to_status_id_str", ""),
         "in_reply_to_sn":  leg.get("in_reply_to_screen_name", ""),
         "is_rt":           bool(rt_id),
@@ -344,7 +344,7 @@ SHARED_CSS = """
 .focal .tweet-date { color: var(--grey); font-size: 13px; margin-bottom: 0; padding-top: 6px; }
 .stats { display: flex; align-items: center; color: var(--grey); font-size: 13px; padding-top: 8px; }
 .stat { display: flex; white-space: nowrap; margin-right: 14px; }
-.stat svg { margin: 3px 4px 4px; }
+.stat svg { margin: 3px 4px 3px 0; }
 .source { margin-left: auto; font-size: 12px; }
 .media-row { display: flex; margin: 6px 0; border-radius: 10px; overflow: hidden; }
 .media-row .attachment { flex: 1; }
