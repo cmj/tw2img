@@ -1,6 +1,6 @@
 # tw2img
 
-A tool that renders tweets as PNG images using Playwright (headless Chromium). Works with tweet IDs, URLs, local JSON files, or stdin.
+A tool that renders tweets as PNG images using Playwright (headless Chromium). Works with usernames, tweet IDs, URLs, local JSON files, or stdin.
 
 This style is based on [nitter](https://github.com/zedeus/nitter/) using [Midnight](https://github.com/cmj/nitter/blob/master/public/css/themes/midnight.css) theme as default.
 
@@ -20,6 +20,9 @@ playwright install chromium
 ### 1. Guest Mode (no login required, missing context for replies)
 
 ```bash
+# By user (fetch latest tweet)
+python tw2img.py --user AP --guest
+
 # By tweet ID
 python tw2img.py 2054583770045386950 --guest
 
@@ -50,6 +53,7 @@ python tw2img.py 2054583770045386950
 
 | Option | Description |
 |--------|-------------|
+| `--user` | Fetch latest tweet from this screen_name |
 | `--light` | Use light theme (default is dark) |
 | `--no-source` | Hide the "Twitter for iPhone" source text |
 | `--no-context` | Show only the focal tweet, no thread/replies |
@@ -63,6 +67,9 @@ python tw2img.py 2054583770045386950
 ## Input Types
 
 ```bash
+# User
+python tw2img.py --user NASA --guest
+
 # Tweet ID
 python tw2img.py 2054583770045386950 --guest
 
