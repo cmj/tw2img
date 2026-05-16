@@ -21,6 +21,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 BEARER = "AAAAAAAAAAAAAAAAAAAAANRILgAAAAAAnNwIzUejRCOuH5E6I8xnZz4puTs%3D1Zv7ttfk8LF81IUq16cHjhLTvJu4FA33AGWWjCpTnA"
+BEARER2 = "AAAAAAAAAAAAAAAAAAAAAFXzAwAAAAAAMHCxpeSDG1gLNLghVe8d74hl6k4%3DRUMF4xAQLsbeBhTSRrCiQpJtxoGWeyHrDb5te2jpGskWDFW82F"
 UA = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
 
 TWEET_DETAIL_URL    = "https://x.com/i/api/graphql/xIYgDwjboktoFeXe_fgacw/TweetDetail"
@@ -135,8 +136,8 @@ def fetch_tweet_result(tweet_id, headers):
 
 def fetch_user_id(screen_name, headers):
     ubsn_headers = dict(headers)
-    if "x-twitter-auth-type" in headers:
-        ubsn_headers["Authorization"] = f"Bearer {BEARER}"
+    if "x-twitter-auth-type" in headers:  # authenticated, use BEARER2
+        ubsn_headers["Authorization"] = f"Bearer {BEARER2}"
     data = _req(USER_BY_SCREEN_NAME_URL, ubsn_headers, {
         "variables": json.dumps({"screen_name": screen_name, "includePromotedContent": False, "withBirdwatchNotes": True, "withVoice": True}),
         "features":  json.dumps(USER_BY_SCREEN_NAME_FEAT),
@@ -212,6 +213,22 @@ def _parse_tweet_result(result, user_parser):
     bw_note = re.sub(r'\s*https?://help\.x\.com\S*', '', bw_note)
     bw_note = re.sub(r'\s*help\.x\.com\S*', '', bw_note)
 
+    card = None
+    raw_card = result.get("card", {}).get("legacy", {})
+    if raw_card:
+        bv = {b["key"]: b["value"] for b in raw_card.get("binding_values", [])}
+        def sv(k): return bv.get(k, {}).get("string_value", "")
+        def iv(k): return bv.get(k, {}).get("image_value", {})
+        title   = sv("title")
+        desc    = sv("description")
+        domain  = sv("vanity_url") or sv("domain")
+        url     = sv("card_url")
+        img_url = (iv("summary_photo_image") or iv("thumbnail_image") or
+                   iv("photo_image_full_size") or {}).get("url", "")
+        if title or desc:
+            card = {"title": title, "desc": desc, "domain": domain,
+                    "url": url, "img_url": img_url}
+
     return {
         "id":              result.get("rest_id"),
         "user":            user,
@@ -230,6 +247,7 @@ def _parse_tweet_result(result, user_parser):
         "in_reply_to_sn":  leg.get("in_reply_to_screen_name", ""),
         "is_rt":           bool(rt_id),
         "quoted":          quoted,
+        "card":            card,
         "birdwatch":       bw_note,
         "birdwatch_ents":  bw_ents,
     }
@@ -350,7 +368,6 @@ def verified_svg(verified_type, is_blue):
     elif verified_type == "Business":   fill, stroke = "#e7b332", "black"
     elif verified_type == "Government": fill, stroke = "#829aab", "black"    
     else: return ""
-    # 'stroke' is checkmark color, going with black instead of white for better contrast
     return (f'<svg width="12" height="12" viewBox="0 0 18 18" xmlns="http://www.w3.org/2000/svg" '
             f'style="display:inline-block;vertical-align:middle;margin:0 0 4px 4px">'
             f'<circle cx="9" cy="9" r="9" fill="{fill}"/>'
@@ -451,6 +468,12 @@ SHARED_CSS = """
 .community-note-header { background-color: var(--bg-hover); font-weight: 700; font-size: 13px; padding: 6px 10px 8px; display: flex; align-items: center; gap: 12px; color: var(--fg); }
 .community-note-header .icon-container { flex-shrink: 0; color: var(--accent); }
 .community-note-text { font-size: 13px; line-height: 1.45; color: var(--fg); white-space: pre-line; padding: 6px 10px 10px; }
+.card { border: 1px solid var(--border); border-radius: 10px; margin: 6px 0; overflow: hidden; display: flex; flex-direction: column; }
+.card-img { width: 100%; display: block; max-height: 220px; object-fit: cover; }
+.card-body { padding: 8px 12px 10px; }
+.card-domain { font-size: 12px; color: var(--grey); text-transform: uppercase; margin-bottom: 2px; }
+.card-title { font-size: 14px; font-weight: 700; line-height: 1.3; margin-bottom: 2px; }
+.card-desc { font-size: 13px; color: var(--grey); line-height: 1.4; }
 """
 
 def quote_block_html(qt):
@@ -475,6 +498,18 @@ def quote_block_html(qt):
   {media}
 </div>"""
 
+def card_html(card):
+    if not card: return ""
+    img = f'<img class="card-img" src="{card["img_url"]}">' if card.get("img_url") else ""
+    return f'''<a href="{card["url"]}" class="card">
+  {img}
+  <div class="card-body">
+    <div class="card-domain">{card["domain"]}</div>
+    <div class="card-title">{card["title"]}</div>
+    <div class="card-desc">{card["desc"]}</div>
+  </div>
+</a>'''
+
 def tweet_row_html(t, is_parent=False, no_source=False):
     u      = t["user"]
     vicon  = verified_svg(u["verified_type"], u["is_blue_verified"])
@@ -495,6 +530,7 @@ def tweet_row_html(t, is_parent=False, no_source=False):
         links = " ".join([f'<a href="#">@{sn}</a>' for sn in reply_to_sns])
         replying = f'<div class="replying-to">Replying to {links}</div>'
 
+    card_block = card_html(t.get("card")) if not t.get("ext_entities", {}).get("media") else ""
     qt_html = quote_block_html(t["quoted"]) if t.get("quoted") else ""
     bw_html = ""
     if t.get("birdwatch"):
@@ -537,6 +573,7 @@ def tweet_row_html(t, is_parent=False, no_source=False):
     {replying}
     <div class="tweet-content">{tweet_text}</div>
     {media_block}
+    {card_block}
     {qt_html}
     {bw_html}
     {"" if is_parent else f'<div class="tweet-date">{abs_time(t["created_at"])}</div>'}
