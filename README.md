@@ -1,6 +1,6 @@
 # tw2img
 
-A tool that renders tweets as PNG images using Playwright (headless Chromium). Works with tweet IDs, URLs, local JSON files, or stdin.
+A tool that renders tweets as PNG images using Playwright (headless Chromium). Works with tweet IDs, URLs, local JSON files, or stdin. This view and layout is based on [Nitter](https://github.com/zedeus/nitter/).
 
 | ![image grid](img/2041557036274475228-nasa.png) | ![birdwatch note and thread](img/1819250493442695340-note.png) |
 |---------------------------------|----------------------|
