@@ -7,8 +7,13 @@ Requirements: playwright only needed for PNG output
 
 Usage:
     tw2img.py <id|url|json|-> [output.png] [options]
+    tw2img.py @username [output.png] [options]
+    tw2img.py @username <1-20> [output.png] [options]
 
 Notes:
+    @username            implies --user; grabs the latest original tweet
+    @username 3          grabs the 3rd most-recent original tweet (skips RTs/replies)
+    @username 3 out.png  same, saves to out.png
     --guest for no authentication, won't see conversation context
     --user <screen_name> to fetch latest tweet from user
     export TWITTER_AUTH_TOKEN=<auth_token>
@@ -21,12 +26,13 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 BEARER = "AAAAAAAAAAAAAAAAAAAAANRILgAAAAAAnNwIzUejRCOuH5E6I8xnZz4puTs%3D1Zv7ttfk8LF81IUq16cHjhLTvJu4FA33AGWWjCpTnA"
-BEARER2 = "AAAAAAAAAAAAAAAAAAAAAFXzAwAAAAAAMHCxpeSDG1gLNLghVe8d74hl6k4%3DRUMF4xAQLsbeBhTSRrCiQpJtxoGWeyHrDb5te2jpGskWDFW82F"
 UA = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
 
-TWEET_DETAIL_URL    = "https://x.com/i/api/graphql/xIYgDwjboktoFeXe_fgacw/TweetDetail"
-TWEET_RESULT_URL    = "https://api.twitter.com/graphql/2Acdg-VztGlHX7MjX67Ysw/TweetResultByRestId"
-GUEST_TOKEN_URL     = "https://api.twitter.com/1.1/guest/activate.json"
+TWEET_DETAIL_URL        = "https://x.com/i/api/graphql/xIYgDwjboktoFeXe_fgacw/TweetDetail"
+TWEET_RESULT_URL        = "https://api.twitter.com/graphql/2Acdg-VztGlHX7MjX67Ysw/TweetResultByRestId"
+USER_BY_SCREEN_NAME_URL = "https://x.com/i/api/graphql/laYnJPCAcVo0o6pzcnlVxQ/UserByScreenName"
+USER_TWEETS_URL         = "https://x.com/i/api/graphql/fgsimYxdCfQmTI_dtJsTXw/UserTweets"
+GUEST_TOKEN_URL         = "https://api.twitter.com/1.1/guest/activate.json"
 
 TWEET_DETAIL_VARS   = lambda id: {"focalTweetId": id, "with_rux_injections": True,
     "rankingMode": "Likes", "includePromotedContent": False, "withCommunity": True,
@@ -60,9 +66,6 @@ TWEET_RESULT_FEAT   = {"creator_subscriptions_tweet_preview_api_enabled": True,
     "responsive_web_graphql_exclude_directive_enabled": True, "verified_phone_label_enabled": False,
     "responsive_web_graphql_skip_user_profile_image_extensions_enabled": False,
     "responsive_web_graphql_timeline_navigation_enabled": True, "responsive_web_enhance_cards_enabled": False}
-
-USER_BY_SCREEN_NAME_URL = "https://x.com/i/api/graphql/laYnJPCAcVo0o6pzcnlVxQ/UserByScreenName"
-USER_TWEETS_URL         = "https://x.com/i/api/graphql/fgsimYxdCfQmTI_dtJsTXw/UserTweets"
 
 USER_BY_SCREEN_NAME_FEAT = {"hidden_profile_subscriptions_enabled": True,
     "rweb_tipjar_consumption_enabled": True,
@@ -136,15 +139,16 @@ def fetch_tweet_result(tweet_id, headers):
 
 def fetch_user_id(screen_name, headers):
     ubsn_headers = dict(headers)
-    if "x-twitter-auth-type" in headers:  # authenticated, use BEARER2
-        ubsn_headers["Authorization"] = f"Bearer {BEARER2}"
+    if "x-twitter-auth-type" in headers:
+        ubsn_headers["Authorization"] = f"Bearer {BEARER}"
     data = _req(USER_BY_SCREEN_NAME_URL, ubsn_headers, {
         "variables": json.dumps({"screen_name": screen_name, "includePromotedContent": False, "withBirdwatchNotes": True, "withVoice": True}),
         "features":  json.dumps(USER_BY_SCREEN_NAME_FEAT),
     })
     return data["data"]["user"]["result"]["rest_id"]
 
-def fetch_latest_tweet_id(user_id, headers):
+def fetch_nth_tweet_id(user_id, headers, n=1):
+    """Return the Nth original tweet (1-based) from UserTweets; skips RTs and replies."""
     data = _req(USER_TWEETS_URL, headers, {
         "variables": json.dumps({"userId": user_id, "count": 20, "includePromotedContent": False,
                                   "withQuickPromoteEligibilityTweetFields": False, "withVoice": True}),
@@ -152,6 +156,7 @@ def fetch_latest_tweet_id(user_id, headers):
         "fieldToggles": json.dumps({"withArticlePlainText": False}),
     })
     instructions = data["data"]["user"]["result"]["timeline"]["timeline"]["instructions"]
+    hits = []
     for instr in instructions:
         if instr.get("type") != "TimelineAddEntries":
             continue
@@ -164,8 +169,10 @@ def fetch_latest_tweet_id(user_id, headers):
             leg = result.get("legacy", {})
             if leg.get("retweeted_status_id_str") or leg.get("in_reply_to_status_id_str"):
                 continue
-            return result.get("rest_id")
-    return None
+            hits.append(result.get("rest_id"))
+            if len(hits) >= n:
+                return hits[-1]
+    return hits[-1] if hits else None
 
 def _parse_user(ur):
     res = ur.get("result", {})
@@ -206,15 +213,21 @@ def _parse_tweet_result(result, user_parser):
         quoted = _parse_tweet_result(qt_res, user_parser)
 
     rt_id = leg.get("retweeted_status_id_str")
+
+    # For retweets, media and cards live on the retweeted status, not the RT wrapper.
+    # The API embeds the original under retweeted_status_result.
+    rt_result = (result.get("retweeted_status_result") or
+                 result.get("tweet", {}).get("retweeted_status_result") or {}).get("result", {})
+    rt_leg = rt_result.get("legacy", {}) if rt_result else {}
+
     bw = result.get("birdwatch_pivot") or {}
     bw_note = bw.get("note", {}).get("text") or bw.get("subtitle", {}).get("text") or ""
     bw_ents = bw.get("note", {}).get("entities") or bw.get("subtitle", {}).get("entities") or []
-    # Strip help.x.com links — appears as bare display URL (no protocol, may end with …)
     bw_note = re.sub(r'\s*https?://help\.x\.com\S*', '', bw_note)
     bw_note = re.sub(r'\s*help\.x\.com\S*', '', bw_note)
 
     card = None
-    raw_card = result.get("card", {}).get("legacy", {})
+    raw_card = (result.get("card") or rt_result.get("card") or {}).get("legacy", {})
     if raw_card:
         bv = {b["key"]: b["value"] for b in raw_card.get("binding_values", [])}
         def sv(k): return bv.get(k, {}).get("string_value", "")
@@ -234,7 +247,7 @@ def _parse_tweet_result(result, user_parser):
         "user":            user,
         "full_text":       leg.get("full_text", ""),
         "entities":        leg.get("entities", {}),
-        "ext_entities":    leg.get("extended_entities") or leg.get("entities", {}),
+        "ext_entities":    leg.get("extended_entities") or rt_leg.get("extended_entities") or leg.get("entities", {}) or rt_leg.get("entities", {}),
         "created_at":      leg.get("created_at", ""),
         "reply_count":     leg.get("reply_count", 0),
         "retweet_count":   leg.get("retweet_count", 0),
@@ -323,6 +336,26 @@ def strip_all_lead_mentions(text, entities):
 
     return text[current_pos:].lstrip(), reply_to_list
 
+def _fmt_duration(ms):
+    """Format milliseconds as M:SS or H:MM:SS."""
+    if not ms:
+        return ""
+    s = int(ms) // 1000
+    h, s = divmod(s, 3600)
+    m, s = divmod(s, 60)
+    if h:
+        return f"{h}:{m:02d}:{s:02d}"
+    return f"{m}:{s:02d}"
+
+PLAY_SVG = (
+    '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 65 65" ' 
+    'width="52" height="52" style="filter:drop-shadow(0 1px 3px rgba(0,0,0,.5))">' 
+    '<circle cx="32.5" cy="32.5" r="32.5" fill="rgba(0,0,0,0.45)"/>' 
+    '<path d="M 22.2275 17.1971 V 43.6465 L 43.0304 30.4218 L 22.2275 17.1971 Z" ' 
+    'fill="rgb(255,255,255)"/>' 
+    '</svg>'
+)
+
 def media_html(ext_entities):
     media_list = ext_entities.get("media", [])
     if not media_list:
@@ -333,10 +366,20 @@ def media_html(ext_entities):
         if m["type"] == "photo":
             parts.append(f'<div class="attachment"><img src="{m["media_url_https"]}"></div>')
         elif m["type"] in ("video", "animated_gif"):
-            parts.append(f'''<div class="attachment video-wrap">
-              <img src="{m["media_url_https"]}">
-              <div class="play-btn"><div class="play-tri"></div></div>
-            </div>''')
+            # Pull duration from video_info variants
+            vi = m.get("video_info", {})
+            dur_ms = vi.get("duration_millis", 0)
+            dur_label = _fmt_duration(dur_ms) if m["type"] == "video" else ""
+            dur_html = (
+                f'<div class="vid-duration">{dur_label}</div>' if dur_label else ""
+            )
+            parts.append(
+                f'<div class="attachment video-wrap">' 
+                f'<img src="{m["media_url_https"]}">' 
+                f'<div class="play-overlay">{PLAY_SVG}</div>' 
+                f'{dur_html}' 
+                f'</div>'
+            )
 
     if len(parts) == 4:
         return f'''<div class="media-grid-2x2">
@@ -451,9 +494,8 @@ SHARED_CSS = """
 .media-grid-2x2 .grid-item img { width: 100%; height: 100%; object-fit: cover; }
 .attachment img { width: 100%; display: block; }
 .video-wrap { position: relative; }
-.play-btn { position: absolute; top: 0; left: 0; right: 0; bottom: 0; display: flex; align-items: center; justify-content: center; }
-.play-btn > div { width: 42px; height: 42px; border-radius: 21px; background: var(--play); display: flex; align-items: center; justify-content: center; }
-.play-tri { width:0; height:0; border-top:9px solid transparent; border-bottom:9px solid transparent; border-left:16px solid white; margin-left:3px; }
+.play-overlay { position: absolute; top: 0; left: 0; right: 0; bottom: 0; display: flex; align-items: center; justify-content: center; pointer-events: none; }
+.vid-duration { position: absolute; bottom: 6px; left: 8px; background: rgba(0,0,0,0.6); color: #fff; font-size: 12px; font-weight: 600; line-height: 1; padding: 3px 5px; border-radius: 4px; pointer-events: none; }
 .quote-block { border: 1px solid var(--border); border-radius: 10px; padding: 10px 12px; margin: 6px 0; background: var(--qt-bg); overflow: hidden; }
 .quote-header { display: flex; align-items: center; flex-wrap: wrap; margin-bottom: 4px; }
 .quote-header > * { margin-right: 4px; }
@@ -635,8 +677,18 @@ async def main():
     p.add_argument("--csrf-token",default=os.environ.get("TWITTER_CSRF_TOKEN"), help="or use envar TWITTER_CSRF_TOKEN")
     args = p.parse_args()
 
+    tweet_index = 1   # 1-based index into UserTweets (1 = latest original tweet)
+    if args.input and re.fullmatch(r'@[A-Za-z0-9_]{1,15}', args.input):
+        if not args.user:
+            args.user = args.input.lstrip('@')
+        args.input = None
+        # args.output holds either a bare 1-20 index or a real output filename
+        if args.output and re.fullmatch(r'[1-9]|1[0-9]|20', args.output):
+            tweet_index = int(args.output)
+            args.output = None   # consumed as index; auto-name will be used
+
     if not args.user and not args.input:
-        sys.exit("Error: provide a tweet ID/URL/file or use --user <screen_name>")
+        sys.exit("Error: provide a tweet ID/URL/file, @username, or use --user <screen_name>")
     inp  = args.input or ""
 
     data = None
@@ -650,7 +702,7 @@ async def main():
                 sys.exit("Error: --auth-token/--csrf-token required (or use --guest)")
             headers = auth_headers(args.auth_token, args.csrf_token)
         user_id = fetch_user_id(args.user, headers)
-        tweet_id = fetch_latest_tweet_id(user_id, headers)
+        tweet_id = fetch_nth_tweet_id(user_id, headers, n=tweet_index)
         if not tweet_id:
             sys.exit(f"Error: no suitable tweet found for @{args.user}")
         if args.guest:
@@ -664,9 +716,15 @@ async def main():
         with open(inp) as f:
             data = json.load(f)
     else:
-        m = re.search(r"(\d+)", inp)
-        if not m: sys.exit(f"Error: cannot parse tweet ID from: {inp}")
-        tweet_id = m.group(1)
+        # id or url input ?
+        if inp.isdigit():
+            m = inp
+            tweet_id = m
+        else:
+            m = re.search(r"/status/(\d+)", inp)
+            if not m:
+                sys.exit("Invalid tweet URL")
+            tweet_id = m.group(1)
 
         if args.guest:
             gt = get_guest_token()
@@ -681,9 +739,8 @@ async def main():
         return
 
     fid = None
-    if not os.path.isfile(inp):
-        m = re.search(r"(\d+)", inp)
-        if m: fid = m.group(1)
+    m = re.search(r"(\d+)", inp)
+    if m: fid = m.group(1)
 
     if "threaded_conversation_with_injections_v2" in data.get("data", {}):
         if not fid:
@@ -697,6 +754,9 @@ async def main():
 
     if args.no_context:
         tweets = [tweets[-1]]
+
+    if not tweets:
+        sys.exit("Failed to parse tweet from API response")
 
     tweet_id = tweets[-1]["id"]
     user_name = tweets[-1]["user"]["screen_name"]
