@@ -10,6 +10,7 @@ Usage:
 
 Notes:
     --guest for no authentication, won't see conversation context
+    --user <screen_name> to fetch latest tweet from user
     export TWITTER_AUTH_TOKEN=<auth_token>
     export TWITTER_CSRF_TOKEN=<x_csrf_token>
         or use random $(openssl rand -hex 16)
@@ -59,6 +60,42 @@ TWEET_RESULT_FEAT   = {"creator_subscriptions_tweet_preview_api_enabled": True,
     "responsive_web_graphql_skip_user_profile_image_extensions_enabled": False,
     "responsive_web_graphql_timeline_navigation_enabled": True, "responsive_web_enhance_cards_enabled": False}
 
+USER_BY_SCREEN_NAME_URL = "https://x.com/i/api/graphql/laYnJPCAcVo0o6pzcnlVxQ/UserByScreenName"
+USER_TWEETS_URL         = "https://x.com/i/api/graphql/fgsimYxdCfQmTI_dtJsTXw/UserTweets"
+
+USER_BY_SCREEN_NAME_FEAT = {"hidden_profile_subscriptions_enabled": True,
+    "rweb_tipjar_consumption_enabled": True,
+    "responsive_web_graphql_exclude_directive_enabled": True, "verified_phone_label_enabled": False,
+    "subscriptions_verification_info_is_identity_verified_enabled": True,
+    "subscriptions_verification_info_verified_since_enabled": True,
+    "highlights_tweets_tab_ui_enabled": True, "responsive_web_twitter_article_notes_tab_enabled": True,
+    "subscriptions_feature_can_gift_premium": False,
+    "creator_subscriptions_tweet_preview_api_enabled": True,
+    "responsive_web_graphql_skip_user_profile_image_extensions_enabled": False,
+    "responsive_web_graphql_timeline_navigation_enabled": True}
+
+USER_TWEETS_FEAT = {"rweb_video_screen_enabled": False, "payments_enabled": False,
+    "profile_label_improvements_pcf_label_in_post_enabled": True, "rweb_tipjar_consumption_enabled": True,
+    "verified_phone_label_enabled": False, "creator_subscriptions_tweet_preview_api_enabled": True,
+    "responsive_web_graphql_timeline_navigation_enabled": True,
+    "responsive_web_graphql_skip_user_profile_image_extensions_enabled": False,
+    "premium_content_api_read_enabled": False, "communities_web_enable_tweet_community_results_fetch": True,
+    "c9s_tweet_anatomy_moderator_badge_enabled": True,
+    "responsive_web_grok_analyze_button_fetch_trends_enabled": False,
+    "responsive_web_grok_analyze_post_followups_enabled": True, "responsive_web_jetfuel_frame": False,
+    "responsive_web_grok_share_attachment_enabled": True, "articles_preview_enabled": True,
+    "responsive_web_edit_tweet_api_enabled": True,
+    "graphql_is_translatable_rweb_tweet_is_translatable_enabled": True,
+    "view_counts_everywhere_api_enabled": True, "longform_notetweets_consumption_enabled": True,
+    "responsive_web_twitter_article_tweet_consumption_enabled": True, "tweet_awards_web_tipping_enabled": False,
+    "responsive_web_grok_show_grok_translated_post": False,
+    "responsive_web_grok_analysis_button_from_backend": True,
+    "creator_subscriptions_quote_tweet_preview_enabled": False,
+    "freedom_of_speech_not_reach_fetch_enabled": True, "standardized_nudges_misinfo": True,
+    "tweet_with_visibility_results_prefer_gql_limited_actions_policy_enabled": True,
+    "longform_notetweets_rich_text_read_enabled": True, "longform_notetweets_inline_media_enabled": True,
+    "responsive_web_grok_image_annotation_enabled": True, "responsive_web_enhance_cards_enabled": False}
+
 def _req(url, headers, params=None):
     if params:
         url = url + "?" + urllib.parse.urlencode(params)
@@ -95,6 +132,39 @@ def fetch_tweet_result(tweet_id, headers):
                                   "withCommunity": False, "includePromotedContent": False, "withVoice": False}),
         "features":  json.dumps(TWEET_RESULT_FEAT),
     })
+
+def fetch_user_id(screen_name, headers):
+    ubsn_headers = dict(headers)
+    if "x-twitter-auth-type" in headers:
+        ubsn_headers["Authorization"] = f"Bearer {BEARER}"
+    data = _req(USER_BY_SCREEN_NAME_URL, ubsn_headers, {
+        "variables": json.dumps({"screen_name": screen_name, "includePromotedContent": False, "withBirdwatchNotes": True, "withVoice": True}),
+        "features":  json.dumps(USER_BY_SCREEN_NAME_FEAT),
+    })
+    return data["data"]["user"]["result"]["rest_id"]
+
+def fetch_latest_tweet_id(user_id, headers):
+    data = _req(USER_TWEETS_URL, headers, {
+        "variables": json.dumps({"userId": user_id, "count": 20, "includePromotedContent": False,
+                                  "withQuickPromoteEligibilityTweetFields": False, "withVoice": True}),
+        "features":  json.dumps(USER_TWEETS_FEAT),
+        "fieldToggles": json.dumps({"withArticlePlainText": False}),
+    })
+    instructions = data["data"]["user"]["result"]["timeline"]["timeline"]["instructions"]
+    for instr in instructions:
+        if instr.get("type") != "TimelineAddEntries":
+            continue
+        for entry in instr.get("entries", []):
+            eid = entry.get("entryId", "")
+            if "pin" in eid or not eid.startswith("tweet-"):
+                continue
+            result = (entry.get("content", {}).get("itemContent", {})
+                          .get("tweet_results", {}).get("result", {}))
+            leg = result.get("legacy", {})
+            if leg.get("retweeted_status_id_str") or leg.get("in_reply_to_status_id_str"):
+                continue
+            return result.get("rest_id")
+    return None
 
 def _parse_user(ur):
     res = ur.get("result", {})
@@ -435,10 +505,10 @@ def tweet_row_html(t, is_parent=False, no_source=False):
                       key=lambda e: e.get("fromIndex", 0), reverse=True)
         for e in ents:
             start, end = e.get("fromIndex"), e.get("toIndex")
-            url = e.get("ref", {}).get("url", "")
+            ref = e.get("ref", {})
+            url = ref.get("expandedUrl") or ref.get("url", "")
             if start is not None and end is not None and url:
-                token = bw_text[start:end]
-                bw_text = bw_text[:start] + f'<a href="{url}">{token}</a>' + bw_text[end:]
+                bw_text = bw_text[:start] + f'<a href="{url}">{url}</a>' + bw_text[end:]
         bw_html = f'''<div class="birdwatch">
           <div class="community-note-header"><span class="icon-container">{icon_svg("group", 13, "var(--accent)")}</span> Community Note</div>
           <div class="community-note-text">{bw_text}</div>
@@ -511,8 +581,9 @@ async def render_png(html, output_path, width=598, retina=True):
 
 async def main():
     p = argparse.ArgumentParser(description="Render tweet as PNG via Playwright")
-    p.add_argument("input",       help="Tweet ID, URL, JSON file, or - for stdin")
+    p.add_argument("input",       nargs="?", default=None, help="Tweet ID, URL, JSON file, or - for stdin")
     p.add_argument("output",      nargs="?", help="Output PNG (default: <screen_name>-<id>.png)")
+    p.add_argument("--user",      default=None, help="Fetch latest tweet from this screen_name")
     p.add_argument("--light",     action="store_true", help="Render image in light mode")
     p.add_argument("--no-source", action="store_true", help="Hide the device name used (iPhone, etc)")
     p.add_argument("--no-context",action="store_true", help="Only show focal tweet, no thread")
@@ -527,10 +598,30 @@ async def main():
     p.add_argument("--csrf-token",default=os.environ.get("TWITTER_CSRF_TOKEN"), help="or use envar TWITTER_CSRF_TOKEN")
     args = p.parse_args()
 
-    inp  = args.input
+    if not args.user and not args.input:
+        sys.exit("Error: provide a tweet ID/URL/file or use --user <screen_name>")
+    inp  = args.input or ""
+
     data = None
 
-    if inp == "-":
+    if args.user:
+        if args.guest:
+            gt = get_guest_token()
+            headers = guest_headers(gt)
+        else:
+            if not args.auth_token or not args.csrf_token:
+                sys.exit("Error: --auth-token/--csrf-token required (or use --guest)")
+            headers = auth_headers(args.auth_token, args.csrf_token)
+        user_id = fetch_user_id(args.user, headers)
+        tweet_id = fetch_latest_tweet_id(user_id, headers)
+        if not tweet_id:
+            sys.exit(f"Error: no suitable tweet found for @{args.user}")
+        if args.guest:
+            data = fetch_tweet_result(tweet_id, headers)
+        else:
+            data = fetch_tweet_detail(tweet_id, args.auth_token, args.csrf_token)
+        inp = tweet_id
+    elif inp == "-":
         data = json.load(sys.stdin)
     elif os.path.isfile(inp):
         with open(inp) as f:
