@@ -17,7 +17,7 @@ python tw2img.py @AP --guest
 # By @username, fetch the 3rd most recent tweet
 python tw2img.py @AP 3 --guest
 # By tweet ID
-python tw2img.py 2054583770045386950 --guest
+python tw2img.py 2041557036274475228 --guest
 # By tweet URL
 python tw2img.py https://x.com/NASA/status/2041557036274475228 --guest
 ```
@@ -47,6 +47,7 @@ python tw2img.py 2054583770045386950
 | `--css custom.css` | Use custom CSS file |
 | `--html-only` | Print HTML to stdout instead of rendering PNG |
 | `--save-html` | Save HTML to this file instead of rendering PNG |
+| `--imgur` | Upload PNG to imgur after rendering |
 | `--dump-json` | Print raw API JSON to stdout and exit |
 ## Input Types
 ```bash
@@ -95,6 +96,10 @@ python tw2img.py @NASA --guest
 **5th most recent tweet from a user:**
 ```bash
 python tw2img.py @NASA 5 --guest
+```
+**Upload to imgur**
+```bash
+python tw2img.py @NASA --guest --imgur
 ```
 **Light theme, focal tweet only:**
 ```bash

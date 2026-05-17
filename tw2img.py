@@ -312,6 +312,31 @@ def abs_time(created_at):
     dt = datetime.strptime(created_at, "%a %b %d %H:%M:%S +0000 %Y")
     return dt.strftime("%b %d, %Y · %I:%M %p UTC").replace(" 0", " ")
 
+def upload_imgur(path):
+    import uuid
+    client_id = os.environ.get("IMGUR_CLIENT_ID", "c9a6efb3d7932fd") # anonymous / public upload id
+    with open(path, "rb") as f:
+        img_data = f.read()
+    boundary = uuid.uuid4().hex
+    body = (
+        f"--{boundary}\r\n"
+        f'Content-Disposition: form-data; name="image"; filename="{os.path.basename(path)}"\r\n'
+        f"Content-Type: image/png\r\n\r\n"
+    ).encode() + img_data + f"\r\n--{boundary}--\r\n".encode()
+    req = urllib.request.Request(
+        "https://api.imgur.com/3/image",
+        data=body,
+        headers={
+            "Authorization": f"Client-ID {client_id}",
+            "Content-Type": f"multipart/form-data; boundary={boundary}",
+        },
+    )
+    with urllib.request.urlopen(req) as r:
+        resp = json.loads(r.read())
+    url = resp["data"]["link"].replace("http://", "https://")
+    delete_hash = resp["data"]["deletehash"]
+    return url, delete_hash
+
 def linkify(text, entities):
     for u in entities.get("urls", []):
         text = text.replace(u["url"], f'<a href="{u["expanded_url"]}">{u["display_url"]}</a>')
@@ -672,6 +697,7 @@ async def main():
     p.add_argument("--css",       default=None, help="Supply custom Nitter or similar css file")
     p.add_argument("--html-only", action="store_true", help="Print HTML to stdout instead of rendering PNG")
     p.add_argument("--save-html", help="Save HTML to this file instead of rendering PNG")
+    p.add_argument("--imgur",     action="store_true", help="Upload PNG to imgur after rendering")
     p.add_argument("--dump-json", action="store_true", help="Print raw API JSON to stdout and exit")
     p.add_argument("--auth-token",default=os.environ.get("TWITTER_AUTH_TOKEN"), help="or use envar TWITTER_AUTH_TOKEN")
     p.add_argument("--csrf-token",default=os.environ.get("TWITTER_CSRF_TOKEN"), help="or use envar TWITTER_CSRF_TOKEN")
@@ -776,6 +802,11 @@ async def main():
 
     await render_png(html, output, width=args.width, retina=not args.no_retina)
     print(f"{output} saved")
-
+    if args.imgur:
+        url, delete_hash = upload_imgur(output)
+        print(f"{url} delete: https://imgur.com/delete/{delete_hash}")
+        # uncomment next 2 lines to save urls to file
+        #with open(os.path.expanduser("~/tw2imgur_urls"), "a") as f:
+        #    f.write(f"{url} delete: https://imgur.com/delete/{delete_hash} {output}\n")
 if __name__ == "__main__":
     asyncio.run(main())
