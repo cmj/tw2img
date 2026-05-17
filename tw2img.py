@@ -212,6 +212,8 @@ def _parse_user(ur):
 def _parse_tweet_result(result, user_parser):
     if not result or result.get("__typename") == "TweetTombstone":
         return None
+    if "tweet" in result and not result.get("legacy"):
+        result = result["tweet"]
     leg  = result.get("legacy", {})
     user = user_parser(result.get("core", {}).get("user_results", {}))
 
@@ -224,8 +226,22 @@ def _parse_tweet_result(result, user_parser):
     rt_id = leg.get("retweeted_status_id_str")
 
     rt_result = (result.get("retweeted_status_result") or
+                 leg.get("retweeted_status_result") or
                  result.get("tweet", {}).get("retweeted_status_result") or {}).get("result", {})
     rt_leg = rt_result.get("legacy", {}) if rt_result else {}
+
+    # rt's need help with new layout
+    if rt_id and rt_result:
+        original = _parse_tweet_result(rt_result, user_parser)
+        if original:
+            original["rt_by_user"] = user
+            return original
+
+    if rt_id and not rt_result:
+        import re as _re
+        full_text = leg.get("full_text", "")
+        stripped = _re.sub(r"^RT @\w+: ?", "", full_text)
+        leg = dict(leg, full_text=stripped)
 
     bw = result.get("birdwatch_pivot") or {}
     bw_note = bw.get("note", {}).get("text") or bw.get("subtitle", {}).get("text") or ""
@@ -255,6 +271,29 @@ def _parse_tweet_result(result, user_parser):
         full_text = leg.get("full_text", "")
         entities  = leg.get("entities", {})
 
+    broadcast_card = None
+    raw_broadcast = result.get("card") or rt_result.get("card") or {}
+    if raw_broadcast:
+        binding_values = raw_broadcast.get("legacy", {}).get("binding_values", [])
+        card_data = {}
+
+        for item in binding_values:
+            key = item.get("key")
+            val_obj = item.get("value", {})
+            val_type = val_obj.get("type")
+
+            if val_type == "STRING" or val_type == "BOOLEAN":
+                card_data[key] = val_obj.get("string_value") or val_obj.get("boolean_value")
+            elif val_type == "IMAGE":
+                card_data[key] = val_obj.get("image_value", {}).get("url")
+
+        if "broadcast_thumbnail" in card_data or "broadcast_thumbnail_large" in card_data:
+            broadcast_card = {
+                "title": card_data.get("broadcast_title", ""),
+                "image": card_data.get("broadcast_thumbnail_large") or card_data.get("broadcast_thumbnail"),
+                "url": card_data.get("broadcast_url", "")
+            }
+
     return {
         "id":              result.get("rest_id"),
         "user":            user,
@@ -276,6 +315,8 @@ def _parse_tweet_result(result, user_parser):
         "card":            card,
         "birdwatch":       bw_note,
         "birdwatch_ents":  bw_ents,
+        "broadcast_card":  broadcast_card,
+        "rt_by_user":      None,
     }
 
 def parse_tweet_detail(data, focal_id):
@@ -286,8 +327,13 @@ def parse_tweet_detail(data, focal_id):
         item   = e.get("content", {}).get("itemContent", {})
         result = item.get("tweet_results", {}).get("result", {})
         if not result: continue
+        # XXX rt's need work
+        entry_id = (result.get("legacy") or result.get("tweet", {}).get("legacy") or {}).get("id_str") or result.get("rest_id")
         t = _parse_tweet_result(result, _parse_user)
-        if t: by_id[t["id"]] = t
+        if t:
+            by_id[t["id"]] = t
+            if entry_id and entry_id != t["id"]:
+                by_id[entry_id] = t
 
     chain = []
     cur   = by_id.get(focal_id)
@@ -486,7 +532,7 @@ body {
     --bw-bg:   #1c1f23;
     --bw-fg:   #5a6472;
     --bg-hover: #22262b;
-    --accent:  #2b608a;
+    --accent:  #8899A6;
     background: var(--bg);
     color: var(--fg);
     font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
@@ -571,6 +617,8 @@ SHARED_CSS = """
 .card-domain { font-size: 12px; color: var(--grey); text-transform: uppercase; margin-bottom: 2px; }
 .card-title { font-size: 14px; font-weight: 700; line-height: 1.3; margin-bottom: 2px; }
 .card-desc { font-size: 13px; color: var(--grey); line-height: 1.4; }
+.rt-header { display: flex; align-items: center; color: var(--grey); font-size: 13px; font-weight: 700; padding: 8px 14px 0 60px; gap: 5px; }
+.rt-header svg { flex-shrink: 0; }
 """
 
 def quote_block_html(qt):
@@ -622,6 +670,17 @@ def tweet_row_html(t, is_parent=False, no_source=False):
     time_str    = rel_time(t["created_at"])
     row_class   = "tweet-row" + ("" if is_parent else " focal")
 
+    # RT header — shown above the tweet row when this is a retweet
+    rt_by = t.get("rt_by_user")
+    rt_header = ""
+    if rt_by:
+        rt_header = (
+            f'<div class="rt-header">'
+            f'{icon_svg("retweet", 13, "var(--grey)")}'
+            f'{rt_by["name"]} retweeted'
+            f'</div>'
+        )
+
     replying = ""
     if reply_to_sns and not is_parent:
         links = " ".join([f'<a href="#">@{sn}</a>' for sn in reply_to_sns])
@@ -632,31 +691,46 @@ def tweet_row_html(t, is_parent=False, no_source=False):
     bw_html = ""
     if t.get("birdwatch"):
         bw_text = t["birdwatch"]
-        ents = []
-        for e in t.get("birdwatch_ents", []):
-            start = e.get("fromIndex")
-            end = e.get("toIndex")
-            if start is not None and end is not None:
-                snippet = bw_text[start:end]
-                if "help.x.com" in snippet:
-                    continue
-            ents.append(e)
-        
-        ents.sort(key=lambda e: e.get("fromIndex", 0), reverse=True)
-        
+        ents = [e for e in t.get("birdwatch_ents", [])
+                if e.get("fromIndex") is not None and e.get("toIndex") is not None]
+        ents.sort(key=lambda e: e["fromIndex"], reverse=True)
         for e in ents:
-            start, end = e.get("fromIndex"), e.get("toIndex")
+            start, end = e["fromIndex"], e["toIndex"]
             ref = e.get("ref", {})
-            url = ref.get("expandedUrl") or ref.get("url", "")
-            if start is not None and end is not None and url:
-                bw_text = bw_text[:start] + f'<a href="{url}">{url}</a>' + bw_text[end:]
-        
-        bw_text = re.sub(r'\s*(?:https?://)?help\.x\.com\S*', '', bw_text)
+            href = ref.get("url", "")
+            display = bw_text[start:end]
+            # remove help.x.com links
+            if "help.x.com" in href or "help.x.com" in display:
+                bw_text = bw_text[:start] + bw_text[end:]
+                continue
+            if href:
+                bw_text = bw_text[:start] + f'<a href="{href}">{display}</a>' + bw_text[end:]
         
         bw_html = f'''<div class="birdwatch">
           <div class="community-note-header"><span class="icon-container">{icon_svg("group", 13, "var(--accent)")}</span> Community Note</div>
           <div class="community-note-text">{bw_text}</div>
         </div>'''
+    broadcast_html = ""
+    if t.get("broadcast_card"):
+        bc = t["broadcast_card"]
+        bc_img = bc.get("image")
+        bc_title = bc.get("title", "")
+        
+        broadcast_html = f'''
+        <div class="tweet-card broadcast-card" style="
+            margin-top: 12px;
+            border: 1px solid var(--border);
+            border-radius: 16px;
+            overflow: hidden;
+            background-color: rgba(0, 0, 0, 0.02);
+        ">
+            {f'<img src="{bc_img}" style="width: 100%; display: block; aspect-ratio: 16/9; object-fit: cover;" />' if bc_img else ''}
+            <div style="padding: 12px; border-top: 1px solid var(--border);">
+                <div style="font-weight: bold; font-size: 15px; color: var(--text); line-height: 1.4;">{bc_title}</div>
+                <div style="font-size: 13px; color: var(--dim); margin-top: 4px; text-transform: lowercase;">x.com/i/broadcasts</div>
+            </div>
+        </div>
+        '''
     src = "" if no_source else f'<span class="source">{t["source"]}</span>'
     stats = f"""<div class="stats">
       <span class="stat">{icon_svg("comment", 13, grey)} {fmt(t["reply_count"])}</span>
@@ -666,7 +740,7 @@ def tweet_row_html(t, is_parent=False, no_source=False):
       <span class="stat">{icon_svg("views",   13, grey)} {fmt(t["view_count"])}</span>
       {src}
     </div>"""
-    return f"""<div class="{row_class}">
+    return f"""{rt_header}<div class="{row_class}">
   <div class="left-col">
     <img class="avatar" src="{u["avatar_url"]}">
     {"<div class='thread-line'></div>" if is_parent else ""}
@@ -684,6 +758,7 @@ def tweet_row_html(t, is_parent=False, no_source=False):
     {card_block}
     {qt_html}
     {bw_html}
+    {broadcast_html}
     {"" if is_parent else f'<div class="tweet-date">{abs_time(t["created_at"])}</div>'}
     {stats}
   </div>
@@ -717,7 +792,6 @@ def _apply_nitter_theme(css_text):
     nv = _parse_css_vars(css_text)
     if not nv:
         return ""
-    # Resolve any var() references within the theme itself (one pass covers all Nitter themes)
     resolved = {k: _resolve_var(v, nv) for k, v in nv.items()}
 
     def get(key, fallback=""):
@@ -777,13 +851,15 @@ async def render_png(html, output_path, width=598, retina=True):
     except ImportError:
         sys.exit("Error: playwright is required for PNG rendering.\n"
                  "Install it with: pip install playwright && playwright install chromium")
+    scale = 2 if retina else 1
     async with async_playwright() as p:
         browser = await p.chromium.launch(args=["--no-sandbox"])
-        context = await browser.new_context(viewport={'width': width, 'height': 800})
+        context = await browser.new_context(
+            viewport={"width": width, "height": 800},
+            device_scale_factor=scale,
+        )
         page = await context.new_page()
         await page.set_content(html, wait_until="networkidle")
-        if retina:
-            await page.evaluate("document.body.style.zoom = '2.0'")
         await asyncio.sleep(0.5)
         thread = page.locator(".thread")
         await thread.screenshot(path=output_path)
