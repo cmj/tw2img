@@ -107,6 +107,15 @@ def _req(url, headers, params=None):
     with urllib.request.urlopen(req) as r:
         return json.loads(r.read())
 
+def resolve_url(url):
+    # not used yet
+    try:
+        req = urllib.request.Request(url, headers={"User-Agent": UA}, method="HEAD")
+        with urllib.request.urlopen(req) as r:
+            return r.url
+    except Exception:
+        return url
+
 def get_guest_token():
     req = urllib.request.Request(GUEST_TOKEN_URL, method="POST",
         headers={"Authorization": f"Bearer {BEARER}", "User-Agent": UA})
@@ -221,8 +230,6 @@ def _parse_tweet_result(result, user_parser):
     bw = result.get("birdwatch_pivot") or {}
     bw_note = bw.get("note", {}).get("text") or bw.get("subtitle", {}).get("text") or ""
     bw_ents = bw.get("note", {}).get("entities") or bw.get("subtitle", {}).get("entities") or []
-    bw_note = re.sub(r'\s*https?://help\.x\.com\S*', '', bw_note)
-    bw_note = re.sub(r'\s*help\.x\.com\S*', '', bw_note)
 
     card = None
     raw_card = (result.get("card") or rt_result.get("card") or {}).get("legacy", {})
@@ -479,7 +486,7 @@ body {
     --bw-bg:   #1c1f23;
     --bw-fg:   #5a6472;
     --bg-hover: #22262b;
-    --accent:  #80CEFF;
+    --accent:  #2b608a;
     background: var(--bg);
     color: var(--fg);
     font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
@@ -625,16 +632,27 @@ def tweet_row_html(t, is_parent=False, no_source=False):
     bw_html = ""
     if t.get("birdwatch"):
         bw_text = t["birdwatch"]
-        # Linkify non-help.x.com URLs in the note using entity indices (process in reverse)
-        ents = sorted([e for e in t.get("birdwatch_ents", [])
-                       if "help.x.com" not in (e.get("ref", {}).get("url") or "")],
-                      key=lambda e: e.get("fromIndex", 0), reverse=True)
+        ents = []
+        for e in t.get("birdwatch_ents", []):
+            start = e.get("fromIndex")
+            end = e.get("toIndex")
+            if start is not None and end is not None:
+                snippet = bw_text[start:end]
+                if "help.x.com" in snippet:
+                    continue
+            ents.append(e)
+        
+        ents.sort(key=lambda e: e.get("fromIndex", 0), reverse=True)
+        
         for e in ents:
             start, end = e.get("fromIndex"), e.get("toIndex")
             ref = e.get("ref", {})
             url = ref.get("expandedUrl") or ref.get("url", "")
             if start is not None and end is not None and url:
                 bw_text = bw_text[:start] + f'<a href="{url}">{url}</a>' + bw_text[end:]
+        
+        bw_text = re.sub(r'\s*(?:https?://)?help\.x\.com\S*', '', bw_text)
+        
         bw_html = f'''<div class="birdwatch">
           <div class="community-note-header"><span class="icon-container">{icon_svg("group", 13, "var(--accent)")}</span> Community Note</div>
           <div class="community-note-text">{bw_text}</div>
