@@ -259,9 +259,16 @@ def _parse_tweet_result(result, user_parser):
         url     = sv("card_url")
         img_url = (iv("summary_photo_image") or iv("thumbnail_image") or
                    iv("photo_image_full_size") or {}).get("url", "")
-        if title or desc:
+        is_player = bool(sv("player_url")) or raw_card.get("name", "") == "player"
+        if is_player:
+            img_url = (iv("player_image_large") or iv("player_image_original") or
+                       iv("player_image") or {}).get("url", "") or img_url
+            player_url = sv("app_url_resolved") or sv("player_url") or sv("card_url")
             card = {"title": title, "desc": desc, "domain": domain,
-                    "url": url, "img_url": img_url}
+                    "url": player_url, "img_url": img_url, "is_player": True}
+        elif title or desc:
+            card = {"title": title, "desc": desc, "domain": domain,
+                    "url": url, "img_url": img_url, "is_player": False}
 
     nt = (result.get("note_tweet") or {}).get("note_tweet_results", {}).get("result", {})
     if nt.get("text"):
@@ -327,7 +334,7 @@ def parse_tweet_detail(data, focal_id):
         item   = e.get("content", {}).get("itemContent", {})
         result = item.get("tweet_results", {}).get("result", {})
         if not result: continue
-        # XXX rt's need work
+        # XXX rt's need help 
         entry_id = (result.get("legacy") or result.get("tweet", {}).get("legacy") or {}).get("id_str") or result.get("rest_id")
         t = _parse_tweet_result(result, _parse_user)
         if t:
@@ -645,6 +652,17 @@ def quote_block_html(qt):
 
 def card_html(card):
     if not card: return ""
+    if card.get("is_player") and card.get("img_url"):
+        return f'''<a href="{card["url"]}" class="card" style="position:relative;display:block;">
+  <div class="attachment video-wrap" style="margin:0;border-radius:0;">
+    <img src="{card["img_url"]}" style="width:100%;display:block;max-height:220px;object-fit:cover;">
+    <div class="play-overlay">{PLAY_SVG}</div>
+  </div>
+  <div class="card-body">
+    <div class="card-domain">{card["domain"]}</div>
+    <div class="card-title">{card["title"]}</div>
+  </div>
+</a>'''
     img = f'<img class="card-img" src="{card["img_url"]}">' if card.get("img_url") else ""
     return f'''<a href="{card["url"]}" class="card">
   {img}
@@ -699,7 +717,7 @@ def tweet_row_html(t, is_parent=False, no_source=False):
             ref = e.get("ref", {})
             href = ref.get("url", "")
             display = bw_text[start:end]
-            # remove help.x.com links
+            # rm help.x.com links
             if "help.x.com" in href or "help.x.com" in display:
                 bw_text = bw_text[:start] + bw_text[end:]
                 continue
