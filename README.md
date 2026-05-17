@@ -44,7 +44,8 @@ python tw2img.py 2054583770045386950
 | `--no-context` | Show only the focal tweet, no thread/replies |
 | `--no-retina` | Disable 2x retina rendering (smaller file) |
 | `--width 800` | Set output width in pixels (default: 598) |
-| `--css custom.css` | Use custom CSS file |
+| `--css theme.css` | File to override the theme (ex: nitter/public/css/themes/pleroma.css) |
+| ` --nitter` | Use Nitter default theme |
 | `--html-only` | Print HTML to stdout instead of rendering PNG |
 | `--save-html` | Save HTML to this file instead of rendering PNG |
 | `--imgur` | Upload PNG to imgur after rendering |

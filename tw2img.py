@@ -214,8 +214,6 @@ def _parse_tweet_result(result, user_parser):
 
     rt_id = leg.get("retweeted_status_id_str")
 
-    # For retweets, media and cards live on the retweeted status, not the RT wrapper.
-    # The API embeds the original under retweeted_status_result.
     rt_result = (result.get("retweeted_status_result") or
                  result.get("tweet", {}).get("retweeted_status_result") or {}).get("result", {})
     rt_leg = rt_result.get("legacy", {}) if rt_result else {}
@@ -242,12 +240,20 @@ def _parse_tweet_result(result, user_parser):
             card = {"title": title, "desc": desc, "domain": domain,
                     "url": url, "img_url": img_url}
 
+    nt = (result.get("note_tweet") or {}).get("note_tweet_results", {}).get("result", {})
+    if nt.get("text"):
+        full_text = nt["text"]
+        entities  = nt.get("entity_set") or nt.get("entities") or leg.get("entities", {})
+    else:
+        full_text = leg.get("full_text", "")
+        entities  = leg.get("entities", {})
+
     return {
         "id":              result.get("rest_id"),
         "user":            user,
-        "full_text":       leg.get("full_text", ""),
-        "entities":        leg.get("entities", {}),
-        "ext_entities":    leg.get("extended_entities") or rt_leg.get("extended_entities") or leg.get("entities", {}) or rt_leg.get("entities", {}),
+        "full_text":       full_text,
+        "entities":        entities,
+        "ext_entities":    leg.get("extended_entities") or rt_leg.get("extended_entities") or nt.get("extended_entities") or leg.get("entities", {}) or rt_leg.get("entities", {}),
         "created_at":      leg.get("created_at", ""),
         "reply_count":     leg.get("reply_count", 0),
         "retweet_count":   leg.get("retweet_count", 0),
@@ -442,6 +448,23 @@ def verified_svg(verified_type, is_blue):
             f'<polyline points="4.5,10 7.5,13 13.5,7" stroke="{stroke}" stroke-width="2.2" '
             f'fill="none" stroke-linecap="round" stroke-linejoin="round"/></svg>')
 
+NITTER_CSS = """
+body {
+    --bg_color: #0f0f0f;
+    --fg_color: #f8f8f2;
+    --fg_faded: #f8f8f2cf;
+    --fg_dark: #ff6c60;
+    --bg_panel: #161616;
+    --bg_elements: #121212;
+    --bg_hover: #1a1a1a;
+    --grey: #888889;
+    --border_grey: #3e3e35;
+    --accent: #ff6c60;
+    --accent_dark: #8a3731;
+    --play_button: #d8574d;
+}
+"""
+
 DARK_CSS = """
 * { box-sizing: border-box; margin: 0; padding: 0; }
 body {
@@ -501,8 +524,8 @@ SHARED_CSS = """
 .tweet-header-left { display: flex; align-items: center; flex-wrap: wrap; flex: 1; overflow: hidden; }
 .tweet-header-left > * { margin-right: 0; }
 .fullname { font-weight: 700; font-size: 15px; white-space: nowrap; }
-.username { color: var(--grey); font-size: 14px; white-space: nowrap; padding-left: 4px; }
-.tweet-time { color: var(--grey); font-size: 14px; white-space: nowrap; flex-shrink: 0; margin-left: 8px; }
+.username { color: var(--accent); font-size: 14px; white-space: nowrap; padding-left: 4px; }
+.tweet-time { color: var(--accent); font-size: 14px; white-space: nowrap; flex-shrink: 0; margin-left: 8px; }
 .replying-to { color: var(--grey); font-size: 13px; margin-bottom: 3px; line-height: 1.4; }
 .tweet-content { font-size: 15px; line-height: 1.5; margin: 4px 0 0; white-space: pre-wrap; word-wrap: break-word; }
 .focal .tweet-content { font-size: 17px; }
@@ -526,7 +549,7 @@ SHARED_CSS = """
 .quote-header > * { margin-right: 4px; }
 .quote-avatar { width: 20px; height: 20px; border-radius: 10px; display: inline-block; }
 .quote-name { font-weight: 700; font-size: 14px; margin-right: 0; }
-.quote-sn { color: var(--grey); font-size: 13px; padding-left: 4px; }
+.quote-sn { color: var(--accent); font-size: 13px; padding-left: 4px; }
 .quote-time { color: var(--grey); font-size: 13px; margin-left: auto; }
 .quote-text { font-size: 14px; line-height: 1.45; white-space: pre-wrap; word-wrap: break-word; }
 .quote-media { margin-top: 6px; border-radius: 8px; overflow: hidden; }
@@ -648,11 +671,76 @@ def tweet_row_html(t, is_parent=False, no_source=False):
   </div>
 </div>"""
 
-def build_html(tweets, light=False, no_source=False, css_path=None, width=598):
-    if css_path and Path(css_path).exists():
-        base_css = Path(css_path).read_text()
+def _parse_css_vars(css_text):
+    """Parse all --variable: value; declarations from the first body{} block.
+    Returns a dict of {--var-name: value}."""
+    m = re.search(r'body\s*\{([^}]*)\}', css_text, re.DOTALL)
+    if not m:
+        return {}
+    result = {}
+    for line in m.group(1).splitlines():
+        line = line.strip().rstrip(";")
+        if line.startswith("--") and ":" in line:
+            k, _, v = line.partition(":")
+            result[k.strip()] = v.strip()
+    return result
+
+def _resolve_var(val, lookup):
+    """Resolve a single var(--name) reference one level deep."""
+    m = re.fullmatch(r'var\(([^)]+)\)', val.strip())
+    if m:
+        ref = m.group(1).strip()
+        return lookup.get(ref, val)
+    return val
+
+def _apply_nitter_theme(css_text):
+    """Translate a Nitter-format body{} variable block into the script's variable names.
+    Returns a CSS body{} override string ready to append after the base theme."""
+    nv = _parse_css_vars(css_text)
+    if not nv:
+        return ""
+    # Resolve any var() references within the theme itself (one pass covers all Nitter themes)
+    resolved = {k: _resolve_var(v, nv) for k, v in nv.items()}
+
+    def get(key, fallback=""):
+        return resolved.get(key, fallback)
+
+    # Map Nitter theme variable names for this script
+    mapping = {
+        "--bg":       get("--bg_color"),
+        "--fg":       get("--fg_color"),
+        "--grey":     get("--grey"),
+        "--border":   get("--border_grey"),
+        "--link":     get("--accent"),
+        "--accent":   get("--accent"),
+        "--acc":      get("--accent_dark") or get("--accent"),
+        "--play":     get("--play_button")  or get("--accent"),
+        "--qt-bg":    get("--bg_elements")  or get("--bg_panel") or get("--bg_color"),
+        "--bw-bg":    get("--bg_panel")     or get("--bg_color"),
+        "--bw-fg":    get("--fg_faded")     or get("--grey"),
+        "--bg-hover": get("--bg_hover"),
+    }
+    lines = [f"    {k}: {v};" for k, v in mapping.items() if v]
+    if not lines:
+        return ""
+    return "body {\n" + "\n".join(lines) + "\n    background: var(--bg);\n    color: var(--fg);\n}\na { color: var(--link); text-decoration: none; }\n"
+
+def build_html(tweets, light=False, no_source=False, css_path=None, width=598, nitter=False):
+    theme_css = LIGHT_CSS if light else DARK_CSS
+    if nitter and not css_path:
+        override = _apply_nitter_theme(NITTER_CSS)
+        base_css = theme_css + SHARED_CSS + "\n" + override
+    elif css_path and Path(css_path).exists():
+        raw = Path(css_path).read_text()
+        override = _apply_nitter_theme(raw)
+        if override:
+            # Keep SHARED_CSS layout rules; replace only the theme variables
+            base_css = theme_css + SHARED_CSS + "\n" + override
+        else:
+            # No recognisable Nitter variables - use the file as raw CSS verbatim
+            base_css = raw
     else:
-        base_css = (LIGHT_CSS if light else DARK_CSS) + SHARED_CSS
+        base_css = theme_css + SHARED_CSS
     rows = []
     for i, t in enumerate(tweets):
         rows.append(tweet_row_html(t, is_parent=(i < len(tweets)-1), no_source=no_source))
@@ -694,7 +782,8 @@ async def main():
     p.add_argument("--no-retina", action="store_true", help="Generate a 50%% smaller image")
     p.add_argument("--guest",     action="store_true", help="Guest mode (no account needed)")
     p.add_argument("--width",     type=int, default=598)
-    p.add_argument("--css",       default=None, help="Supply custom Nitter or similar css file")
+    p.add_argument("--css",       default=None, help="File to override the theme (ex: nitter/public/css/themes/pleroma.css)")
+    p.add_argument("--nitter",    action="store_true", help="Use Nitter default theme")
     p.add_argument("--html-only", action="store_true", help="Print HTML to stdout instead of rendering PNG")
     p.add_argument("--save-html", help="Save HTML to this file instead of rendering PNG")
     p.add_argument("--imgur",     action="store_true", help="Upload PNG to imgur after rendering")
@@ -788,7 +877,7 @@ async def main():
     user_name = tweets[-1]["user"]["screen_name"]
     output = args.output or f"{user_name}-{tweet_id}.png"
 
-    html = build_html(tweets, light=args.light, no_source=args.no_source, css_path=args.css, width=args.width)
+    html = build_html(tweets, light=args.light, no_source=args.no_source, css_path=args.css, width=args.width, nitter=args.nitter)
 
     if args.save_html:
         with open(args.save_html, 'w', encoding='utf-8') as f:
