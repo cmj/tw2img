@@ -314,7 +314,7 @@ def abs_time(created_at):
 
 def upload_imgur(path):
     import uuid
-    client_id = os.environ.get("IMGUR_CLIENT_ID", "c9a6efb3d7932fd") # anonymous / public upload id
+    client_id = os.environ.get("IMGUR_CLIENT_ID", "17385cf5260cef9") # anonymous / public upload id
     with open(path, "rb") as f:
         img_data = f.read()
     boundary = uuid.uuid4().hex
