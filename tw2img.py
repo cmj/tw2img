@@ -228,9 +228,11 @@ def _parse_tweet_result(result, user_parser):
     rt_result = (result.get("retweeted_status_result") or
                  leg.get("retweeted_status_result") or
                  result.get("tweet", {}).get("retweeted_status_result") or {}).get("result", {})
+
+    if not rt_id and rt_result:
+        rt_id = rt_result.get("rest_id") or rt_result.get("legacy", {}).get("id_str") or "rt"
     rt_leg = rt_result.get("legacy", {}) if rt_result else {}
 
-    # rt's need help with new layout
     if rt_id and rt_result:
         original = _parse_tweet_result(rt_result, user_parser)
         if original:
@@ -334,7 +336,6 @@ def parse_tweet_detail(data, focal_id):
         item   = e.get("content", {}).get("itemContent", {})
         result = item.get("tweet_results", {}).get("result", {})
         if not result: continue
-        # XXX rt's need help 
         entry_id = (result.get("legacy") or result.get("tweet", {}).get("legacy") or {}).get("id_str") or result.get("rest_id")
         t = _parse_tweet_result(result, _parse_user)
         if t:
