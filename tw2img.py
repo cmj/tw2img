@@ -292,7 +292,23 @@ def _parse_tweet_result(result, user_parser):
     qt_res = result.get("quoted_status_result", {}).get("result") or \
              result.get("quoted_status_results", {}).get("result")
     if qt_res:
-        quoted = _parse_tweet_result(qt_res, user_parser)
+        if qt_res.get("__typename") == "TweetTombstone":
+            tombstone_text = (qt_res.get("tombstone", {}).get("text", {}).get("text")
+                              or "This tweet is unavailable.")
+            permalink = leg.get("quoted_status_permalink", {})
+            expanded = permalink.get("expanded", "")
+            m_sn = re.search(r"(?:twitter|x)\.com/([^/]+)/status", expanded)
+            sn = m_sn.group(1) if m_sn else ""
+            quoted = {"__tombstone": True, "screen_name": sn, "text": tombstone_text}
+        else:
+            quoted = _parse_tweet_result(qt_res, user_parser)
+    elif leg.get("quoted_status_id_str") and result.get("quoted_status_result") == {}:
+        # Empty result object = tweet was deleted
+        permalink = leg.get("quoted_status_permalink", {})
+        expanded = permalink.get("expanded", "")
+        m_sn = re.search(r"(?:twitter|x)\.com/([^/]+)/status", expanded)
+        sn = m_sn.group(1) if m_sn else ""
+        quoted = {"__tombstone": True, "screen_name": sn, "text": "This tweet is unavailable."}
 
     rt_id = leg.get("retweeted_status_id_str")
 
@@ -754,6 +770,12 @@ SHARED_CSS = """
 
 def quote_block_html(qt):
     if not qt: return ""
+    if qt.get("__tombstone"):
+        sn = qt.get("screen_name", "")
+        label = f"This tweet from @{sn} is unavailable." if sn else qt.get("text", "This tweet is unavailable.")
+        return f'''<div class="quote-block" style="display:flex;align-items:center;justify-content:center;padding:14px 12px;">
+  <span style="color:var(--grey);font-size:14px;">{label}</span>
+</div>'''
     u    = qt["user"]
     text = linkify(qt["full_text"], qt["entities"])
     vicon = verified_svg(u["verified_type"], u["is_blue_verified"])
