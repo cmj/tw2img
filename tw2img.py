@@ -108,7 +108,6 @@ def _req(url, headers, params=None):
         return json.loads(r.read())
 
 def resolve_url(url):
-    # not used yet
     try:
         req = urllib.request.Request(url, headers={"User-Agent": UA}, method="HEAD")
         with urllib.request.urlopen(req) as r:
@@ -209,6 +208,78 @@ def _parse_user(ur):
         "verified_type":  verified_type,
     }
 
+def _extract_media_attribution(ext_entities, result=None, rt_result=None):
+    """Return attribution user dict {name, screen_name, avatar_url, is_blue_verified}
+    from additional_media_info.source_user (TweetResultByRestId) or
+    card binding_values amplify_card_user_results (TweetDetail), or None."""
+
+    def _user_from_result(res):
+        if not res:
+            return None
+        leg = res.get("legacy", {})
+        name        = leg.get("name", "")
+        screen_name = leg.get("screen_name", "")
+        avatar_url  = leg.get("profile_image_url_https", "").replace("_normal", "_bigger")
+        is_blue     = res.get("is_blue_verified", False)
+        ver         = res.get("verification", {}) or {}
+        verified_type = ver.get("verified_type") or leg.get("verified_type") or res.get("verified_type")
+        if not verified_type and ver.get("is_verified_business"):
+            verified_type = "Business"
+        if name and screen_name:
+            return {"name": name, "screen_name": screen_name,
+                    "avatar_url": avatar_url, "is_blue_verified": is_blue,
+                    "verified_type": verified_type}
+        return None
+
+    # Gather all unique candidate media dictionaries to search through
+    dicts_to_check = []
+    if isinstance(ext_entities, dict):
+        dicts_to_check.append(ext_entities)
+
+    for r in [result, rt_result]:
+        if isinstance(r, dict):
+            tw = r.get("tweet") if "tweet" in r else r
+            if isinstance(tw, dict):
+                l = tw.get("legacy", {})
+                if isinstance(l, dict):
+                    if "extended_entities" in l and isinstance(l["extended_entities"], dict):
+                        dicts_to_check.append(l["extended_entities"])
+                    if "entities" in l and isinstance(l["entities"], dict):
+                        dicts_to_check.append(l["entities"])
+
+    # Path 1: additional_media_info.source_user on any found media item
+    for d in dicts_to_check:
+        for m in d.get("media", []):
+            if isinstance(m, dict):
+                src = (m.get("additional_media_info") or {}).get("source_user") or {}
+                res = src.get("user_results", {}).get("result")
+                u = _user_from_result(res)
+                if u:
+                    return u
+
+    # Path 2: card binding_values amplify_card_user_results (TweetDetail)
+    for r in [result, rt_result]:
+        if isinstance(r, dict):
+            tw = r.get("tweet") if "tweet" in r else r
+            if isinstance(tw, dict):
+                raw_card = (tw.get("card") or {}).get("legacy", {})
+                if isinstance(raw_card, dict):
+                    binding_values = raw_card.get("binding_values", [])
+                    if isinstance(binding_values, list):
+                        bv = {}
+                        for b in binding_values:
+                            if isinstance(b, dict) and "key" in b and "value" in b:
+                                bv[b["key"]] = b["value"]
+                        res = (bv.get("amplify_card_user_results", {})
+                                 .get("user_value", {})
+                                 .get("user_results", {})
+                                 .get("result"))
+                        u = _user_from_result(res)
+                        if u:
+                            return u
+
+    return None
+
 def _parse_tweet_result(result, user_parser):
     if not result or result.get("__typename") == "TweetTombstone":
         return None
@@ -302,20 +373,47 @@ def _parse_tweet_result(result, user_parser):
                 "image": card_data.get("broadcast_thumbnail_large") or card_data.get("broadcast_thumbnail"),
                 "url": card_data.get("broadcast_url", "")
             }
+    ext_entities = (
+        leg.get("extended_entities")
+        or rt_leg.get("extended_entities")
+        or nt.get("extended_entities")
+        or leg.get("entities", {})
+        or rt_leg.get("entities", {})
+    )
+
+    media_attr = None
+    for media_item in ext_entities.get("media", []):
+        src_user = (
+            media_item.get("additional_media_info", {})
+            .get("source_user", {})
+            .get("user_results", {})
+            .get("result")
+        )
+
+        if src_user:
+            media_attr = _parse_user({"result": src_user})
+            break
+
+    if not media_attr:
+        media_attr = _extract_media_attribution(
+            ext_entities,
+            result=result,
+            rt_result=rt_result if rt_result else None,
+        )
 
     return {
         "id":              result.get("rest_id"),
         "user":            user,
         "full_text":       full_text,
         "entities":        entities,
-        "ext_entities":    leg.get("extended_entities") or rt_leg.get("extended_entities") or nt.get("extended_entities") or leg.get("entities", {}) or rt_leg.get("entities", {}),
+        "ext_entities":    ext_entities,
+        "media_attribution": media_attr,
         "created_at":      leg.get("created_at", ""),
         "reply_count":     leg.get("reply_count", 0),
         "retweet_count":   leg.get("retweet_count", 0),
         "quote_count":     leg.get("quote_count", 0),
         "like_count":      leg.get("favorite_count", 0),
         "view_count":      result.get("views", {}).get("count", 0),
-        "source":          re.sub(r"<[^>]+>", "", result.get("source", "")),
         "source":          re.sub(r"(?i)^twitter\s+for\s+|^twitter\s*", "", re.sub(r"<[^>]+>", "", result.get("source", ""))),
         "in_reply_to_id":  leg.get("in_reply_to_status_id_str", ""),
         "in_reply_to_sn":  leg.get("in_reply_to_screen_name", ""),
@@ -381,7 +479,7 @@ def abs_time(created_at):
 
 def upload_imgur(path):
     import uuid
-    client_id = os.environ.get("IMGUR_CLIENT_ID", "17385cf5260cef9") # anonymous / public upload id
+    client_id = os.environ.get("IMGUR_CLIENT_ID", "17385cf5260cef9")
     with open(path, "rb") as f:
         img_data = f.read()
     boundary = uuid.uuid4().hex
@@ -429,7 +527,6 @@ def strip_all_lead_mentions(text, entities):
     return text[current_pos:].lstrip(), reply_to_list
 
 def _fmt_duration(ms):
-    """Format milliseconds as M:SS or H:MM:SS."""
     if not ms:
         return ""
     s = int(ms) // 1000
@@ -443,10 +540,22 @@ PLAY_SVG = (
     '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 65 65" ' 
     'width="52" height="52" style="filter:drop-shadow(0 1px 3px rgba(0,0,0,.5))">' 
     '<circle cx="32.5" cy="32.5" r="32.5" fill="rgba(0,0,0,0.45)"/>' 
-    '<path d="M 22.2275 17.1971 V 43.6465 L 43.0304 30.4218 L 22.2275 17.1971 Z" ' 
+    '<path d="M 24.2275 18.1971 V 44.6465 L 45.0304 31.4218 L 24.2275 18.1971 Z" ' 
     'fill="rgb(255,255,255)"/>' 
     '</svg>'
 )
+
+def _attribution_html(attr):
+    """Render attribution row between tweet text and media: mini round avatar + bold full name + checkmark, matching nitter's layout."""
+    if not attr: return ""
+    vicon = verified_svg(attr.get("verified_type"), attr.get("is_blue_verified", False))
+    avatar = attr["avatar_url"]
+    return (
+        f'<div class="media-attribution" style="display: flex; align-items: center; margin-top: 2px; margin-bottom: 8px; font-size: 13px; color: var(--grey); gap: 4px; font-family: -apple-system, BlinkMacSystemFont, sans-serif;">'
+        f'<img class="attr-avatar" src="{avatar}" style="width: 16px; height: 16px; border-radius: 50%; object-fit: cover; display: inline-block; vertical-align: middle;">'
+        f'<span>From </span><strong class="attr-name" style="color: var(--fg); font-weight: 700; margin-left: 1px; margin-right: 1px;">{attr["name"]}</strong>{vicon}'
+        f'</div>'
+    )
 
 def media_html(ext_entities):
     media_list = ext_entities.get("media", [])
@@ -458,7 +567,6 @@ def media_html(ext_entities):
         if m["type"] == "photo":
             parts.append(f'<div class="attachment"><img src="{m["media_url_https"]}"></div>')
         elif m["type"] in ("video", "animated_gif"):
-            # Pull duration from video_info variants
             vi = m.get("video_info", {})
             dur_ms = vi.get("duration_millis", 0)
             dur_label = _fmt_duration(dur_ms) if m["type"] == "video" else ""
@@ -466,10 +574,10 @@ def media_html(ext_entities):
                 f'<div class="vid-duration">{dur_label}</div>' if dur_label else ""
             )
             parts.append(
-                f'<div class="attachment video-wrap">' 
-                f'<img src="{m["media_url_https"]}">' 
-                f'<div class="play-overlay">{PLAY_SVG}</div>' 
-                f'{dur_html}' 
+                f'<div class="attachment video-wrap">'
+                f'<img src="{m["media_url_https"]}">'
+                f'<div class="play-overlay">{PLAY_SVG}</div>'
+                f'{dur_html}'
                 f'</div>'
             )
 
@@ -488,6 +596,7 @@ def media_html(ext_entities):
         </div>'''
     else:
         return f'<div class="media-row">{"".join(parts)}</div>'
+
 GLYPHS = {
     "comment": ("M1000 350q0-97-67-179t-182-130-251-48q-39 0-81 4-110-97-257-135-27-8-63-12-10-1-17 5t-10 16v1q-2 2 0 6t1 6 2 5l4 5t4 5 4 5q4 5 17 19t20 22 17 22 18 28 15 33 15 42q-88 50-138 123t-51 157q0 73 40 139t109 115 163 76 197 28q135 0 251-48t182-130 67-179z", 1000),
     "retweet": ("M714 11q0-7-5-13t-13-5h-535q-5 0-8 1t-5 4-3 4-2 7 0 6v335h-107q-15 0-25 11t-11 25q0 13 8 23l179 214q11 12 27 12t28-12l178-214q9-10 9-23 0-15-11-25t-25-11h-107v-214h321q9 0 14-6l89-108q4-5 4-11z m357 232q0-13-8-23l-178-214q-12-13-28-13t-27 13l-179 214q-8 10-8 23 0 14 11 25t25 11h107v214h-322q-9 0-14 7l-89 107q-4 5-4 11 0 7 5 12t13 6h536q4 0 7-1t5-4 3-5 2-6 1-7v-334h107q14 0 25-11t10-25z", 1071),
@@ -559,7 +668,7 @@ LIGHT_CSS = """
 * { box-sizing: border-box; margin: 0; padding: 0; }
 body {
     --bg:      #ffffff;
-    --fg:      #0f1419;
+    --fg: #0f1419;
     --grey:    #536471;
     --border:  #cfd9de;
     --link:    #1d9bf0;
@@ -616,6 +725,9 @@ SHARED_CSS = """
 .video-wrap { position: relative; }
 .play-overlay { position: absolute; top: 0; left: 0; right: 0; bottom: 0; display: flex; align-items: center; justify-content: center; pointer-events: none; }
 .vid-duration { position: absolute; bottom: 6px; left: 8px; background: rgba(0,0,0,0.6); color: #fff; font-size: 12px; font-weight: 600; line-height: 1; padding: 3px 5px; border-radius: 4px; pointer-events: none; }
+.media-attribution { display: flex; align-items: center; gap: 6px; margin: 6px 0 4px; }
+.attr-avatar { width: 24px; height: 24px; border-radius: 50%; display: block; flex-shrink: 0; }
+.attr-name { font-size: 14px; font-weight: 700; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .quote-block { border: 1px solid var(--border); border-radius: 10px; padding: 10px 12px; margin: 6px 0; background: var(--qt-bg); overflow: hidden; }
 .quote-header { display: flex; align-items: center; flex-wrap: wrap; margin-bottom: 4px; }
 .quote-header > * { margin-right: 4px; }
@@ -696,11 +808,11 @@ def tweet_row_html(t, is_parent=False, no_source=False):
         reply_to_sns = [t["in_reply_to_sn"]]
 
     tweet_text  = linkify(clean_text, t["entities"])
-    media_block = media_html(t["ext_entities"])
+    attr_block  = _attribution_html(t.get("media_attribution"))
+    media_block = (attr_block + media_html(t["ext_entities"])) if attr_block else media_html(t["ext_entities"])
     time_str    = rel_time(t["created_at"])
     row_class   = "tweet-row" + ("" if is_parent else " focal")
 
-    # RT header — shown above the tweet row when this is a retweet
     rt_by = t.get("rt_by_user")
     rt_header = ""
     if rt_by:
@@ -729,7 +841,6 @@ def tweet_row_html(t, is_parent=False, no_source=False):
             ref = e.get("ref", {})
             href = ref.get("url", "")
             display = bw_text[start:end]
-            # rm help.x.com links
             if "help.x.com" in href or "help.x.com" in display:
                 bw_text = bw_text[:start] + bw_text[end:]
                 continue
@@ -795,8 +906,6 @@ def tweet_row_html(t, is_parent=False, no_source=False):
 </div>"""
 
 def _parse_css_vars(css_text):
-    """Parse all --variable: value; declarations from the first body{} block.
-    Returns a dict of {--var-name: value}."""
     m = re.search(r'body\s*\{([^}]*)\}', css_text, re.DOTALL)
     if not m:
         return {}
@@ -809,7 +918,6 @@ def _parse_css_vars(css_text):
     return result
 
 def _resolve_var(val, lookup):
-    """Resolve a single var(--name) reference one level deep."""
     m = re.fullmatch(r'var\(([^)]+)\)', val.strip())
     if m:
         ref = m.group(1).strip()
@@ -817,8 +925,6 @@ def _resolve_var(val, lookup):
     return val
 
 def _apply_nitter_theme(css_text):
-    """Translate a Nitter-format body{} variable block into the script's variable names.
-    Returns a CSS body{} override string ready to append after the base theme."""
     nv = _parse_css_vars(css_text)
     if not nv:
         return ""
@@ -827,7 +933,6 @@ def _apply_nitter_theme(css_text):
     def get(key, fallback=""):
         return resolved.get(key, fallback)
 
-    # Map Nitter theme variable names for this script
     mapping = {
         "--bg":       get("--bg_color"),
         "--fg":       get("--fg_color"),
@@ -856,10 +961,8 @@ def build_html(tweets, light=False, no_source=False, css_path=None, width=598, n
         raw = Path(css_path).read_text()
         override = _apply_nitter_theme(raw)
         if override:
-            # Keep SHARED_CSS layout rules; replace only the theme variables
             base_css = theme_css + SHARED_CSS + "\n" + override
         else:
-            # No recognisable Nitter variables - use the file as raw CSS verbatim
             base_css = raw
     else:
         base_css = theme_css + SHARED_CSS
@@ -916,15 +1019,14 @@ async def main():
     p.add_argument("--csrf-token",default=os.environ.get("TWITTER_CSRF_TOKEN"), help="or use envar TWITTER_CSRF_TOKEN")
     args = p.parse_args()
 
-    tweet_index = 1   # 1-based index into UserTweets (1 = latest original tweet)
+    tweet_index = 1
     if args.input and re.fullmatch(r'@[A-Za-z0-9_]{1,15}', args.input):
         if not args.user:
             args.user = args.input.lstrip('@')
         args.input = None
-        # args.output holds either a bare 1-20 index or a real output filename
         if args.output and re.fullmatch(r'[1-9]|1[0-9]|20', args.output):
             tweet_index = int(args.output)
-            args.output = None   # consumed as index; auto-name will be used
+            args.output = None
 
     if not args.user and not args.input:
         sys.exit("Error: provide a tweet ID/URL/file, @username, or use --user <screen_name>")
@@ -955,7 +1057,6 @@ async def main():
         with open(inp) as f:
             data = json.load(f)
     else:
-        # id or url input ?
         if inp.isdigit():
             m = inp
             tweet_id = m
@@ -1018,8 +1119,9 @@ async def main():
     if args.imgur:
         url, delete_hash = upload_imgur(output)
         print(f"{url} delete: https://imgur.com/delete/{delete_hash}")
-        # uncomment next 2 lines to save urls to file
+        # uncomment next 2 lines to save imgur url history
         #with open(os.path.expanduser("~/tw2imgur_urls"), "a") as f:
         #    f.write(f"{url} delete: https://imgur.com/delete/{delete_hash} {output}\n")
+
 if __name__ == "__main__":
     asyncio.run(main())
