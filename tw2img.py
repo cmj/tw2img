@@ -370,24 +370,22 @@ def _parse_tweet_result(result, user_parser):
     broadcast_card = None
     raw_broadcast = result.get("card") or rt_result.get("card") or {}
     if raw_broadcast:
-        binding_values = raw_broadcast.get("legacy", {}).get("binding_values", [])
-        card_data = {}
-
-        for item in binding_values:
-            key = item.get("key")
-            val_obj = item.get("value", {})
-            val_type = val_obj.get("type")
-
-            if val_type == "STRING" or val_type == "BOOLEAN":
-                card_data[key] = val_obj.get("string_value") or val_obj.get("boolean_value")
-            elif val_type == "IMAGE":
-                card_data[key] = val_obj.get("image_value", {}).get("url")
-
-        if "broadcast_thumbnail" in card_data or "broadcast_thumbnail_large" in card_data:
+        bc_bv_raw = raw_broadcast.get("legacy", {}).get("binding_values", [])
+        if isinstance(bc_bv_raw, list):
+            bc_bv = {b["key"]: b["value"] for b in bc_bv_raw if "key" in b and "value" in b}
+        else:
+            bc_bv = bc_bv_raw or {}
+        def bc_sv(k): return bc_bv.get(k, {}).get("string_value", "")
+        def bc_iv(k): return bc_bv.get(k, {}).get("image_value", {}).get("url", "")
+        bc_title = bc_sv("broadcast_title")
+        bc_thumb = bc_iv("broadcast_thumbnail_large") or bc_iv("broadcast_thumbnail")
+        bc_url   = bc_sv("broadcast_url")
+        bc_name  = raw_broadcast.get("legacy", {}).get("name", "")
+        if bc_thumb or bc_title or "broadcast" in bc_name:
             broadcast_card = {
-                "title": card_data.get("broadcast_title", ""),
-                "image": card_data.get("broadcast_thumbnail_large") or card_data.get("broadcast_thumbnail"),
-                "url": card_data.get("broadcast_url", "")
+                "title": bc_title,
+                "image": bc_thumb,
+                "url":   bc_url,
             }
     ext_entities = (
         leg.get("extended_entities")
