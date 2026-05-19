@@ -446,10 +446,20 @@ def parse_tweet_detail(data, focal_id):
     instr   = data["data"]["threaded_conversation_with_injections_v2"]["instructions"]
     entries = next((i["entries"] for i in instr if i.get("type") == "TimelineAddEntries"), [])
     by_id = {}
+    tombstones = {}  # id -> screen_name extracted from entry id
     for e in entries:
         item   = e.get("content", {}).get("itemContent", {})
         result = item.get("tweet_results", {}).get("result", {})
         if not result: continue
+        if result.get("__typename") == "TweetTombstone":
+            # entry id like "tweet-1234567" gives us the tweet id
+            entry_id = e.get("entryId", "")
+            m = re.search(r"tweet-(\d+)", entry_id)
+            tid = m.group(1) if m else None
+            if tid:
+                tombstone_text = result.get("tombstone", {}).get("text", {}).get("text", "This tweet is unavailable.")
+                tombstones[tid] = {"__tombstone": True, "id": tid, "text": tombstone_text, "screen_name": ""}
+            continue
         entry_id = (result.get("legacy") or result.get("tweet", {}).get("legacy") or {}).get("id_str") or result.get("rest_id")
         t = _parse_tweet_result(result, _parse_user)
         if t:
@@ -462,7 +472,24 @@ def parse_tweet_detail(data, focal_id):
     while cur:
         chain.insert(0, cur)
         parent_id = cur["in_reply_to_id"]
-        cur = by_id.get(parent_id) if parent_id else None
+        if not parent_id:
+            break
+        next_cur = by_id.get(parent_id)
+        if not next_cur:
+            # Check if the missing parent is a known tombstone
+            if parent_id in tombstones:
+                ts = tombstones[parent_id]
+                # Try to get screen_name from the focal tweet's in_reply_to_sn chain
+                sn = cur.get("in_reply_to_sn", "")
+                ts = dict(ts, screen_name=sn)
+                chain.insert(0, ts)
+            elif cur.get("in_reply_to_sn"):
+                # Parent missing entirely — synthesize a tombstone from what we know
+                chain.insert(0, {"__tombstone": True, "id": parent_id,
+                                  "screen_name": cur["in_reply_to_sn"],
+                                  "text": "This tweet is unavailable."})
+            break
+        cur = next_cur
     return chain if chain else list(by_id.values())
 
 def parse_tweet_result_single(data):
@@ -764,6 +791,14 @@ SHARED_CSS = """
 .card-domain { font-size: 12px; color: var(--grey); text-transform: uppercase; margin-bottom: 2px; }
 .card-title { font-size: 14px; font-weight: 700; line-height: 1.3; margin-bottom: 2px; }
 .card-desc { font-size: 13px; color: var(--grey); line-height: 1.4; }
+.tweet-row.focal { flex-direction: column; padding: 0; }
+.focal-header { display: flex; align-items: center; padding: 12px 14px 8px; gap: 12px; }
+.focal-header .avatar { width: 46px; height: 46px; border-radius: 23px; flex-shrink: 0; }
+.focal-header-names { display: flex; flex-direction: column; justify-content: center; line-height: 1.25; }
+.focal-header-top { display: flex; align-items: center; gap: 3px; }
+.focal-header-top .fullname { font-size: 15px; font-weight: 700; }
+.focal-header-bottom .username { color: var(--accent); font-size: 14px; padding-left: 0; }
+.focal-body { padding: 0 14px 14px; }
 .rt-header { display: flex; align-items: center; color: var(--grey); font-size: 13px; font-weight: 700; padding: 8px 14px 0 60px; gap: 5px; }
 .rt-header svg { flex-shrink: 0; }
 """
@@ -820,6 +855,19 @@ def card_html(card):
 </a>'''
 
 def tweet_row_html(t, is_parent=False, no_source=False):
+    if t.get("__tombstone"):
+        sn = t.get("screen_name", "")
+        label = f"This tweet from @{sn} is unavailable." if sn else "This tweet is unavailable."
+        line = "<div class='thread-line'></div>" if is_parent else ""
+        return f"""<div class="tweet-row">
+  <div class="left-col">
+    <svg width="46" height="46" viewBox="0 0 46 46" xmlns="http://www.w3.org/2000/svg"><circle cx="23" cy="23" r="23" fill="var(--border)"/><text x="23" y="28" text-anchor="middle" font-size="20" fill="var(--grey)">?</text></svg>
+    {line}
+  </div>
+  <div class="right-col" style="display:flex;align-items:center;padding-bottom:12px;">
+    <span style="color:var(--grey);font-size:14px;">{label}</span>
+  </div>
+</div>"""
     u      = t["user"]
     vicon  = verified_svg(u["verified_type"], u["is_blue_verified"])
     grey   = "var(--grey)"
@@ -903,10 +951,11 @@ def tweet_row_html(t, is_parent=False, no_source=False):
       <span class="stat">{icon_svg("views",   13, grey)} {fmt(t["view_count"])}</span>
       {src}
     </div>"""
-    return f"""{rt_header}<div class="{row_class}">
+    if is_parent:
+        return f"""{rt_header}<div class="{row_class}">
   <div class="left-col">
     <img class="avatar" src="{u["avatar_url"]}">
-    {"<div class='thread-line'></div>" if is_parent else ""}
+    <div class='thread-line'></div>
   </div>
   <div class="right-col">
     <div class="tweet-header">
@@ -922,7 +971,28 @@ def tweet_row_html(t, is_parent=False, no_source=False):
     {qt_html}
     {bw_html}
     {broadcast_html}
-    {"" if is_parent else f'<div class="tweet-date">{abs_time(t["created_at"])}</div>'}
+    {stats}
+  </div>
+</div>"""
+    else:
+        return f"""{rt_header}<div class="{row_class}">
+  <div class="focal-header">
+    <img class="avatar" src="{u["avatar_url"]}">
+    <div class="focal-header-names">
+      <div class="focal-header-top"><span class="fullname">{u["name"]}</span>{vicon}</div>
+      <div class="focal-header-bottom"><span class="username">@{u["screen_name"]}</span></div>
+    </div>
+    <span class="tweet-time" style="margin-left:auto">{time_str}</span>
+  </div>
+  <div class="focal-body">
+    {replying}
+    <div class="tweet-content">{tweet_text}</div>
+    {media_block}
+    {card_block}
+    {qt_html}
+    {bw_html}
+    {broadcast_html}
+    <div class="tweet-date">{abs_time(t["created_at"])}</div>
     {stats}
   </div>
 </div>"""
