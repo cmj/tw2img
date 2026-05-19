@@ -750,8 +750,8 @@ SHARED_CSS = """
 .focal .tweet-content { font-size: 17px; }
 .focal .tweet-date { color: var(--grey); font-size: 13px; margin-bottom: 0; padding-top: 6px; }
 .stats { display: flex; align-items: center; color: var(--grey); font-size: 13px; padding-top: 8px; }
-.stat { display: flex; white-space: nowrap; margin-right: 14px; }
-.stat svg { margin: 3px 4px 3px 0; }
+.stat { white-space: nowrap; margin-right: 10px; }
+.stat svg { margin: 3px 1px 5px 0; }
 .source { margin-left: auto; font-size: 12px; }
 .media-row { display: flex; margin: 6px 0; border-radius: 10px; overflow: hidden; }
 .media-row .attachment { flex: 1; }
