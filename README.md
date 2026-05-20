@@ -10,7 +10,7 @@ pip install playwright
 playwright install chromium
 ```
 ## Quick Start
-### 1. Guest Mode (no login required, missing context for replies)
+### 1. Guest Mode (no auth token required, missing context for replies)
 ```bash
 # By @username (fetch latest tweet)
 python tw2img.py @AP --guest
