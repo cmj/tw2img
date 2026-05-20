@@ -827,14 +827,14 @@ SHARED_CSS = """
 .card-title { font-size: 14px; font-weight: 700; line-height: 1.3; margin-bottom: 2px; }
 .card-desc { font-size: 13px; color: var(--grey); line-height: 1.4; }
 .tweet-row.focal { flex-direction: column; padding: 0; }
-.focal-header { display: flex; align-items: center; padding: 12px 14px 8px; gap: 12px; }
+.focal-header { display: flex; align-items: center; padding: 0 14px 8px; gap: 12px; }
 .focal-header .avatar { width: 46px; height: 46px; border-radius: 23px; flex-shrink: 0; }
 .focal-header-names { display: flex; flex-direction: column; justify-content: center; line-height: 1.25; }
 .focal-header-top { display: flex; align-items: center; gap: 3px; }
 .focal-header-top .fullname { font-size: 15px; font-weight: 700; }
 .focal-header-bottom .username { color: var(--accent); font-size: 14px; padding-left: 0; }
 .focal-body { padding: 0 14px 14px; }
-.rt-header { display: flex; align-items: center; color: var(--grey); font-size: 13px; font-weight: 700; padding: 8px 14px 0 60px; gap: 5px; }
+.rt-header { display: flex; align-items: center; color: var(--grey); font-size: 13px; font-weight: 700; padding: 8px 14px 0 53px; gap: 5px; }
 .rt-header svg { flex-shrink: 0; }
 """
 
