@@ -22,8 +22,8 @@ Notes:
 
 Config file (INI format, [tw2img] section):
     Config is loaded in this order, later sources override earlier ones:
-      1. ~/.config/tw2img/tw2img.conf   (user default)
-      2. <script_dir>/tw2img.conf       (next to the script, if present)
+      1. ~/.config/tw2img/tw2img.conf   (user default, only if it exists)
+      2. ./tw2img.conf                  (current directory, only if it exists)
       3. -c /path/to/custom.conf        (explicit override via -c / --config)
       4. CLI flags                      (always highest priority)
     Example:  tw2img.py 12345 -c ~/work/tw2img-work.conf --light
@@ -34,23 +34,27 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 DEFAULT_CONFIG_PATH = Path.home() / ".config" / "tw2img" / "tw2img.conf"
-SCRIPT_CONFIG_PATH  = Path(__file__).resolve().parent / "tw2img.conf"
+CWD_CONFIG_PATH     = Path.cwd() / "tw2img.conf"
 
 def load_config(extra_path=None):
     """Load and merge config files in priority order (later overrides earlier):
-      1. ~/.config/tw2img/tw2img.conf   (user default, always checked)
-      2. <script_dir>/tw2img.conf       (next to the script, if present)
+      1. ~/.config/tw2img/tw2img.conf   (user default, only if it exists)
+      2. tw2img.conf in current directory (only if it exists)
       3. extra_path                     (supplied via -c / --config flag)
     Returns a merged dict of key->value strings from the [tw2img] section."""
     cfg = configparser.ConfigParser()
-    sources = [DEFAULT_CONFIG_PATH, SCRIPT_CONFIG_PATH]
+    sources = []
+    if DEFAULT_CONFIG_PATH.exists():
+        sources.append(DEFAULT_CONFIG_PATH)
+    cwd_conf = Path.cwd() / "tw2img.conf"
+    if cwd_conf.exists() and cwd_conf != DEFAULT_CONFIG_PATH:
+        sources.append(cwd_conf)
     if extra_path:
         p = Path(extra_path).expanduser()
         if not p.exists():
             sys.exit(f"Error: config file not found: {p}")
         sources.append(p)
-    # configparser.read() silently skips missing files and merges in order
-    cfg.read([str(s) for s in sources if s.exists()])
+    cfg.read([str(s) for s in sources])
     return dict(cfg["tw2img"]) if "tw2img" in cfg else {}
 
 BEARER = "AAAAAAAAAAAAAAAAAAAAANRILgAAAAAAnNwIzUejRCOuH5E6I8xnZz4puTs%3D1Zv7ttfk8LF81IUq16cHjhLTvJu4FA33AGWWjCpTnA"
@@ -527,7 +531,7 @@ def parse_tweet_result_single(data):
         sys.exit(f"Error: {msg}")
     return [_parse_tweet_result(result, _parse_user)]
 
-_FULL_STATS = False
+_FULL_STATS = False   # set to True by --full-stats / config full_stats=true
 
 def fmt(n):
     n = int(n or 0)
@@ -950,7 +954,8 @@ def tweet_row_html(t, is_parent=False, no_source=False):
                 # short 'display' urls are snippets
                 bw_text = bw_text[:start] + f'<a href="{href}">{display}</a>' + bw_text[end:]
                 # full urls are wrapped in t.co links, to enable we need to
-                # HEAD each url, might be too much overhead for birdwatch cards.
+                # HEAD each url, might be too much overhead for birdwatch
+                # cards.
                 # todo: resolve_url() on these 
                 #bw_text = bw_text[:start] + f'<a href="{href}">{href}</a>' + bw_text[end:]
 
