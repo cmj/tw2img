@@ -1169,6 +1169,8 @@ async def main():
     p.add_argument("--save-html",  default=conf.get("save_html") or None, help="Save HTML to this file instead of rendering PNG")
     p.add_argument("--imgur",      action="store_true", default=_b("imgur"), help="Upload PNG to imgur after rendering")
     p.add_argument("--dump-json",  action="store_true", default=_b("dump_json"), help="Print raw API JSON to stdout and exit")
+    p.add_argument("--imgur-log",  default=conf.get("imgur_log") or None, metavar="FILE",
+                   help="Append imgur URL + delete link to FILE after each upload (e.g. ~/tw2imgur_urls)")
     p.add_argument("--full-stats", action="store_true", default=_b("full_stats"),
                    help="Show full unabbreviated stat numbers (e.g. 12,345 instead of 12.3K)")
     p.add_argument("--auth-token", default=conf.get("auth_token") or os.environ.get("TWITTER_AUTH_TOKEN"), help="or use envar TWITTER_AUTH_TOKEN")
@@ -1291,9 +1293,10 @@ async def main():
     if args.imgur:
         url, delete_hash = upload_imgur(output)
         print(f"{url} delete: https://imgur.com/delete/{delete_hash}")
-        # uncomment next 2 lines to save imgur url history
-        #with open(os.path.expanduser("~/tw2imgur_urls"), "a") as f:
-        #    f.write(f"{url} delete: https://imgur.com/delete/{delete_hash} {output}\n")
+        if args.imgur_log:
+            log_path = os.path.expanduser(args.imgur_log)
+            with open(log_path, "a") as f:
+                f.write(f"{url} delete: https://imgur.com/delete/{delete_hash} {output}\n")
 
 if __name__ == "__main__":
     asyncio.run(main())
