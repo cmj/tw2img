@@ -19,11 +19,39 @@ Notes:
     export TWITTER_AUTH_TOKEN=<auth_token>
     export TWITTER_CSRF_TOKEN=<x_csrf_token>
         or use random $(openssl rand -hex 16)
+
+Config file (INI format, [tw2img] section):
+    Config is loaded in this order — later sources override earlier ones:
+      1. ~/.config/tw2img/tw2img.conf   (user default)
+      2. <script_dir>/tw2img.conf       (next to the script, if present)
+      3. -c /path/to/custom.conf        (explicit override via -c / --config)
+      4. CLI flags                      (always highest priority)
+    Example:  tw2img.py 12345 -c ~/work/tw2img-work.conf --light
 """
 
-import sys, json, re, os, argparse, asyncio, tempfile, urllib.request, urllib.parse
+import sys, json, re, os, argparse, asyncio, tempfile, urllib.request, urllib.parse, configparser
 from datetime import datetime, timezone
 from pathlib import Path
+
+DEFAULT_CONFIG_PATH = Path.home() / ".config" / "tw2img" / "tw2img.conf"
+SCRIPT_CONFIG_PATH  = Path(__file__).resolve().parent / "tw2img.conf"
+
+def load_config(extra_path=None):
+    """Load and merge config files in priority order (later overrides earlier):
+      1. ~/.config/tw2img/tw2img.conf   (user default, always checked)
+      2. <script_dir>/tw2img.conf       (next to the script, if present)
+      3. extra_path                     (supplied via -c / --config flag)
+    Returns a merged dict of key->value strings from the [tw2img] section."""
+    cfg = configparser.ConfigParser()
+    sources = [DEFAULT_CONFIG_PATH, SCRIPT_CONFIG_PATH]
+    if extra_path:
+        p = Path(extra_path).expanduser()
+        if not p.exists():
+            sys.exit(f"Error: config file not found: {p}")
+        sources.append(p)
+    # configparser.read() silently skips missing files and merges in order
+    cfg.read([str(s) for s in sources if s.exists()])
+    return dict(cfg["tw2img"]) if "tw2img" in cfg else {}
 
 BEARER = "AAAAAAAAAAAAAAAAAAAAANRILgAAAAAAnNwIzUejRCOuH5E6I8xnZz4puTs%3D1Zv7ttfk8LF81IUq16cHjhLTvJu4FA33AGWWjCpTnA"
 UA = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
@@ -497,8 +525,12 @@ def parse_tweet_result_single(data):
         sys.exit(f"Error: {msg}")
     return [_parse_tweet_result(result, _parse_user)]
 
+_FULL_STATS = False   # set to True by --full-stats / config full_stats=true
+
 def fmt(n):
     n = int(n or 0)
+    if _FULL_STATS:
+        return f"{n:,}"
     if n >= 1_000_000: return f"{n/1_000_000:.1f}M"
     if n >= 1_000:     return f"{n/1_000:.1f}K"
     return str(n)
@@ -1089,25 +1121,58 @@ async def render_png(html, output_path, width=598, retina=True):
         await browser.close()
 
 async def main():
-    p = argparse.ArgumentParser(description="Render tweet as PNG via Playwright")
-    p.add_argument("input",       nargs="?", default=None, help="Tweet ID, URL, JSON file, or - for stdin")
-    p.add_argument("output",      nargs="?", help="Output PNG (default: <screen_name>-<id>.png)")
-    p.add_argument("--user",      default=None, help="Fetch latest tweet from this screen_name")
-    p.add_argument("--light",     action="store_true", help="Render image in light mode")
-    p.add_argument("--no-source", action="store_true", help="Hide the device name used (iPhone, etc)")
-    p.add_argument("--no-context",action="store_true", help="Only show focal tweet, no thread")
-    p.add_argument("--no-retina", action="store_true", help="Generate a 50%% smaller image")
-    p.add_argument("--guest",     action="store_true", help="Guest mode (no account needed)")
-    p.add_argument("--width",     type=int, default=598)
-    p.add_argument("--css",       default=None, help="File to override the theme (ex: nitter/public/css/themes/pleroma.css)")
-    p.add_argument("--nitter",    action="store_true", help="Use Nitter default theme")
-    p.add_argument("--html-only", action="store_true", help="Print HTML to stdout instead of rendering PNG")
-    p.add_argument("--save-html", help="Save HTML to this file instead of rendering PNG")
-    p.add_argument("--imgur",     action="store_true", help="Upload PNG to imgur after rendering")
-    p.add_argument("--dump-json", action="store_true", help="Print raw API JSON to stdout and exit")
-    p.add_argument("--auth-token",default=os.environ.get("TWITTER_AUTH_TOKEN"), help="or use envar TWITTER_AUTH_TOKEN")
-    p.add_argument("--csrf-token",default=os.environ.get("TWITTER_CSRF_TOKEN"), help="or use envar TWITTER_CSRF_TOKEN")
+    # Pre-parse -c/--config before building the full parser so it can seed defaults.
+    # We do a lightweight scan of sys.argv rather than a separate ArgumentParser
+    # to avoid interfering with positional arguments.
+    _pre = argparse.ArgumentParser(add_help=False)
+    _pre.add_argument("-c", "--config", default=None)
+    _pre_args, _ = _pre.parse_known_args()
+    conf = load_config(extra_path=_pre_args.config)
+
+    def _b(key):
+        """Return bool default from conf, defaulting to False."""
+        return conf.get(key, "false").strip().lower() == "true"
+
+    p = argparse.ArgumentParser(
+        description="Render tweet as PNG via Playwright",
+        epilog=(
+            "Config file (INI format, [tw2img] section) is loaded in priority order:\n"
+            "  1. ~/.config/tw2img/tw2img.conf  (user default)\n"
+            "  2. <script_dir>/tw2img.conf       (next to script, if present)\n"
+            "  3. -c /path/to/custom.conf        (explicit override)\n"
+            "  4. CLI flags                      (always highest priority)\n"
+            "\nExample: tw2img.py 12345 -c ~/work/tw2img-work.conf --light"
+        ),
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+    p.add_argument("input",        nargs="?", default=None, help="Tweet ID, URL, JSON file, or - for stdin")
+    p.add_argument("output",       nargs="?", help="Output PNG (default: <screen_name>-<id>.png)")
+    p.add_argument("-c", "--config", default=None, metavar="FILE",
+                   help="Load config from FILE instead of (or in addition to) defaults. "
+                        "Merged on top of ~/.config/tw2img/tw2img.conf and <script_dir>/tw2img.conf; "
+                        "CLI flags still override everything.")
+    p.add_argument("--user",       default=conf.get("user"), help="Fetch latest tweet from this screen_name")
+    p.add_argument("--light",      action="store_true", default=_b("light"), help="Render image in light mode")
+    p.add_argument("--no-source",  action="store_true", default=_b("no_source"), help="Hide the device name used (iPhone, etc)")
+    p.add_argument("--no-context", action="store_true", default=_b("no_context"), help="Only show focal tweet, no thread")
+    p.add_argument("--no-retina",  action="store_true", default=_b("no_retina"), help="Generate a 50%% smaller image")
+    p.add_argument("--guest",      action="store_true", default=_b("guest"), help="Guest mode (no account needed)")
+    p.add_argument("--width",      type=int, default=int(conf.get("width", 598)))
+    p.add_argument("--css",        default=conf.get("css") or None, help="File to override the theme (ex: nitter/public/css/themes/pleroma.css)")
+    p.add_argument("--nitter",     action="store_true", default=_b("nitter"), help="Use Nitter default theme")
+    p.add_argument("--html-only",  action="store_true", default=_b("html_only"), help="Print HTML to stdout instead of rendering PNG")
+    p.add_argument("--save-html",  default=conf.get("save_html") or None, help="Save HTML to this file instead of rendering PNG")
+    p.add_argument("--imgur",      action="store_true", default=_b("imgur"), help="Upload PNG to imgur after rendering")
+    p.add_argument("--dump-json",  action="store_true", default=_b("dump_json"), help="Print raw API JSON to stdout and exit")
+    p.add_argument("--full-stats", action="store_true", default=_b("full_stats"),
+                   help="Show full unabbreviated stat numbers (e.g. 12,345 instead of 12.3K)")
+    p.add_argument("--auth-token", default=conf.get("auth_token") or os.environ.get("TWITTER_AUTH_TOKEN"), help="or use envar TWITTER_AUTH_TOKEN")
+    p.add_argument("--csrf-token", default=conf.get("csrf_token") or os.environ.get("TWITTER_CSRF_TOKEN"), help="or use envar TWITTER_CSRF_TOKEN")
     args = p.parse_args()
+
+    # Apply full-stats flag globally so fmt() picks it up
+    global _FULL_STATS
+    _FULL_STATS = args.full_stats
 
     tweet_index = 1
     if args.input and re.fullmatch(r'@[A-Za-z0-9_]{1,15}', args.input):
