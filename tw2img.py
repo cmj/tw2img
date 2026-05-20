@@ -354,9 +354,13 @@ def _parse_tweet_result(result, user_parser):
             original["rt_by_user"] = user
             return original
 
+    rt_orig_sn = None
     if rt_id and not rt_result:
         import re as _re
         full_text = leg.get("full_text", "")
+        _rt_m = _re.match(r"^RT @(\w+): ?", full_text)
+        if _rt_m:
+            rt_orig_sn = _rt_m.group(1)
         stripped = _re.sub(r"^RT @\w+: ?", "", full_text)
         leg = dict(leg, full_text=stripped)
 
@@ -460,6 +464,7 @@ def _parse_tweet_result(result, user_parser):
         "in_reply_to_id":  leg.get("in_reply_to_status_id_str", ""),
         "in_reply_to_sn":  leg.get("in_reply_to_screen_name", ""),
         "is_rt":           bool(rt_id),
+        "rt_orig_sn":      rt_orig_sn,
         "quoted":          quoted,
         "card":            card,
         "birdwatch":       bw_note,
@@ -1254,8 +1259,20 @@ async def main():
         sys.exit("Failed to parse tweet from API response")
 
     tweet_id = tweets[-1]["id"]
-    user_name = tweets[-1]["user"]["screen_name"]
-    output = args.output or f"{user_name}-{tweet_id}.png"
+    focal = tweets[-1]
+    user_name = focal["user"]["screen_name"]
+    if not args.output and (focal.get("rt_by_user") or focal.get("is_rt")):
+        if focal.get("rt_by_user"):
+            rt_by = focal["rt_by_user"]["screen_name"]
+            orig  = focal["user"]["screen_name"]
+            output = f"{rt_by}-rt-{orig}-{tweet_id}.png"
+        elif focal.get("rt_orig_sn"):
+            orig  = focal["rt_orig_sn"]
+            output = f"{user_name}-rt-{orig}-{tweet_id}.png"
+        else:
+            output = f"{user_name}-rt-{tweet_id}.png"
+    else:
+        output = args.output or f"{user_name}-{tweet_id}.png"
 
     html = build_html(tweets, light=args.light, no_source=args.no_source, css_path=args.css, width=args.width, nitter=args.nitter)
 
