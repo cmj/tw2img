@@ -140,5 +140,9 @@ python tw2img.py 2054583770045386950 --guest --html-only
 ```
 **Save HTML to a file**
 ```bash
-python tw2img.py 2054583770045386950 --guest --html-only > tweet.html
+python tw2img.py 2054583770045386950 --guest --save-html tweet.html
+```
+**Save HTML to a file and load in Firefox**
+```bash
+python tw2img.py --guest @barackobama --full-stats --save-html /tmp/tweet.html && firefox /tmp/tweet.html
 ```
