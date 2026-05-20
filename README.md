@@ -43,19 +43,39 @@ python tw2img.py 2054583770045386950
 | `--no-source` | Hide the "Twitter for iPhone" source text |
 | `--no-context` | Show only the focal tweet, no thread/replies |
 | `--no-retina` | Disable 2x retina rendering (smaller file) |
+| `--full-stats` | Show full numbers instead of abbreviated (e.g. 12,345 instead of 12.3K) |
 | `--width 800` | Set output width in pixels (default: 598) |
 | `--css theme.css` | File to override the theme (ex: nitter/public/css/themes/pleroma.css) |
-| ` --nitter` | Use Nitter default theme |
+| `--nitter` | Use Nitter default theme |
 | `--html-only` | Print HTML to stdout instead of rendering PNG |
 | `--save-html` | Save HTML to this file instead of rendering PNG |
 | `--imgur` | Upload PNG to imgur after rendering |
 | `--dump-json` | Print raw API JSON to stdout and exit |
+| `-c <file>` | Load config from a custom path (see Config below) |
+## Config File
+Options can be set as persistent defaults in a config file (INI format). Config is loaded in this order - later sources override earlier ones:
+
+1. `~/.config/tw2img/tw2img.conf` - user default
+2. `<script_dir>/tw2img.conf` - next to the script, if present
+3. `-c /path/to/custom.conf` - explicit override
+4. Command options / flags  always have highest priority
+
+A default config is included as `tw2img.conf`. To install it:
+```bash
+mkdir -p ~/.config/tw2img
+cp tw2img.conf ~/.config/tw2img/tw2img.conf
+```
+
+Use `-c` to load an alternate config for a specific run without touching your defaults:
+```bash
+python tw2img.py 2054583770045386950 -c ~/work/tw2img-work.conf --light
+```
 ## Input Types
 ```bash
-# @username shorthand — latest tweet
+# @username shorthand - latest tweet
 python tw2img.py @NASA --guest
 
-# @username shorthand — Nth most recent tweet (1-20, skips RTs and replies)
+# @username shorthand - Nth most recent tweet (1-20, skips RTs and replies)
 python tw2img.py @NASA 5 --guest
 
 # Explicit --user flag (equivalent to @username)
@@ -109,6 +129,10 @@ python tw2img.py 2054583770045386950 --guest --light --no-context
 **Wide screenshot without source:**
 ```bash
 python tw2img.py 2054583770045386950 --guest --width 800 --no-source
+```
+**Full stat numbers:**
+```bash
+python tw2img.py 2054583770045386950 --guest --full-stats
 ```
 **Print HTML to stdout (for inspection or debugging)**
 ```bash
