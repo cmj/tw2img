@@ -44,6 +44,7 @@ python tw2img.py 2054583770045386950
 | `--no-context` | Show only the focal tweet, no thread/replies |
 | `--no-retina` | Disable 2x retina rendering (smaller file) |
 | `--full-stats` | Show full numbers instead of abbreviated (e.g. 12,345 instead of 12.3K) |
+| `--output-dir <path>` | Directory to save output PNG (default: current working directory) |
 | `--width 800` | Set output width in pixels (default: 598) |
 | `--css theme.css` | File to override the theme (ex: nitter/public/css/themes/pleroma.css) |
 | `--nitter` | Use Nitter default theme |
@@ -65,6 +66,13 @@ A default config is included as `tw2img.conf`. To install it:
 mkdir -p ~/.config/tw2img
 cp tw2img.conf ~/.config/tw2img/tw2img.conf
 ```
+
+Set a default download directory in the config so you don't have to specify it each run:
+```ini
+[tw2img]
+output_dir = ~/Pictures/tweets
+```
+If `output_dir` is set, all PNGs are saved there unless you pass an explicit output path (absolute or with a directory component) on the command line.
 
 Use `-c` to load an alternate config for a specific run without touching your defaults:
 ```bash

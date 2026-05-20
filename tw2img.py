@@ -21,7 +21,7 @@ Notes:
         or use random $(openssl rand -hex 16)
 
 Config file (INI format, [tw2img] section):
-    Config is loaded in this order — later sources override earlier ones:
+    Config is loaded in this order, later sources override earlier ones:
       1. ~/.config/tw2img/tw2img.conf   (user default)
       2. <script_dir>/tw2img.conf       (next to the script, if present)
       3. -c /path/to/custom.conf        (explicit override via -c / --config)
@@ -507,15 +507,12 @@ def parse_tweet_detail(data, focal_id):
             break
         next_cur = by_id.get(parent_id)
         if not next_cur:
-            # Check if the missing parent is a known tombstone
             if parent_id in tombstones:
                 ts = tombstones[parent_id]
-                # Try to get screen_name from the focal tweet's in_reply_to_sn chain
                 sn = cur.get("in_reply_to_sn", "")
                 ts = dict(ts, screen_name=sn)
                 chain.insert(0, ts)
             elif cur.get("in_reply_to_sn"):
-                # Parent missing entirely — synthesize a tombstone from what we know
                 chain.insert(0, {"__tombstone": True, "id": parent_id,
                                   "screen_name": cur["in_reply_to_sn"],
                                   "text": "This tweet is unavailable."})
@@ -530,7 +527,7 @@ def parse_tweet_result_single(data):
         sys.exit(f"Error: {msg}")
     return [_parse_tweet_result(result, _parse_user)]
 
-_FULL_STATS = False   # set to True by --full-stats / config full_stats=true
+_FULL_STATS = False
 
 def fmt(n):
     n = int(n or 0)
@@ -950,8 +947,13 @@ def tweet_row_html(t, is_parent=False, no_source=False):
                 bw_text = bw_text[:start] + bw_text[end:]
                 continue
             if href:
+                # short 'display' urls are snippets
                 bw_text = bw_text[:start] + f'<a href="{href}">{display}</a>' + bw_text[end:]
-        
+                # full urls are wrapped in t.co links, to enable we need to
+                # HEAD each url, might be too much overhead for birdwatch cards.
+                # todo: resolve_url() on these 
+                #bw_text = bw_text[:start] + f'<a href="{href}">{href}</a>' + bw_text[end:]
+
         bw_html = f'''<div class="birdwatch">
           <div class="community-note-header"><span class="icon-container">{icon_svg("group", 13, "var(--accent)")}</span> Community Note</div>
           <div class="community-note-text">{bw_text}</div>
@@ -1167,6 +1169,8 @@ async def main():
     p.add_argument("--nitter",     action="store_true", default=_b("nitter"), help="Use Nitter default theme")
     p.add_argument("--html-only",  action="store_true", default=_b("html_only"), help="Print HTML to stdout instead of rendering PNG")
     p.add_argument("--save-html",  default=conf.get("save_html") or None, help="Save HTML to this file instead of rendering PNG")
+    p.add_argument("--output-dir", default=conf.get("output_dir") or None, metavar="DIR",
+                   help="Directory to save output PNG (default: current working directory)")
     p.add_argument("--imgur",      action="store_true", default=_b("imgur"), help="Upload PNG to imgur after rendering")
     p.add_argument("--dump-json",  action="store_true", default=_b("dump_json"), help="Print raw API JSON to stdout and exit")
     p.add_argument("--imgur-log",  default=conf.get("imgur_log") or None, metavar="FILE",
@@ -1275,6 +1279,9 @@ async def main():
             output = f"{user_name}-rt-{tweet_id}.png"
     else:
         output = args.output or f"{user_name}-{tweet_id}.png"
+
+    if args.output_dir and not os.path.isabs(output) and not os.path.dirname(output):
+        output = os.path.join(os.path.expanduser(args.output_dir), output)
 
     html = build_html(tweets, light=args.light, no_source=args.no_source, css_path=args.css, width=args.width, nitter=args.nitter)
 
