@@ -27,6 +27,15 @@ Config file (INI format, [tw2img] section):
       3. -c /path/to/custom.conf        (explicit override via -c / --config)
       4. CLI flags                      (always highest priority)
     Example:  tw2img.py 12345 -c ~/work/tw2img-work.conf --light
+
+    Viewer settings (open saved file automatically):
+      view   = true              # enable auto-open after saving
+      viewer = viewnior          # PNG viewer  (default when --save-html not used)
+      viewer = kitty +icat {}    # terminal inline display (kitty)
+      viewer = eog               # GNOME image viewer
+      viewer = firefox           # good default when saving as HTML (--save-html)
+      viewer = xdg-open          # let the OS pick the right app
+    Use {} as a placeholder for the filename; otherwise the path is appended.
 """
 
 import sys, json, re, os, argparse, asyncio, tempfile, urllib.request, urllib.parse, configparser
@@ -131,6 +140,44 @@ USER_TWEETS_FEAT = {"rweb_video_screen_enabled": False, "payments_enabled": Fals
     "tweet_with_visibility_results_prefer_gql_limited_actions_policy_enabled": True,
     "longform_notetweets_rich_text_read_enabled": True, "longform_notetweets_inline_media_enabled": True,
     "responsive_web_grok_image_annotation_enabled": True, "responsive_web_enhance_cards_enabled": False}
+
+def open_with_viewer(path, viewer):
+    """Open *path* with the configured viewer command.
+
+    The viewer string may be:
+      - A plain command name / path, e.g. ``viewnior`` or ``eog``
+      - A command with a placeholder ``{}``, e.g. ``kitty +icat {}``
+      - Multiple words without ``{}``, in which case the file is appended, e.g.
+        ``firefox`` becomes ``firefox saved.html``
+
+    The process is launched detached (fire-and-forget for GUI apps) or
+    waited for in-place (terminal viewers such as ``kitty +icat``).
+    """
+    import shlex, subprocess
+    viewer = viewer.strip()
+    if "{}" in viewer:
+        cmd = shlex.split(viewer.replace("{}", shlex.quote(str(path))))
+    else:
+        cmd = shlex.split(viewer) + [str(path)]
+
+    # Terminal viewers (kitty +icat, chafa, viu, timg, etc) should run in-process so
+    # their output appears in the current terminal; GUI apps are detached.
+    terminal_hints = ("icat", "chafa", "viu", "catimg", "timg", "jp2a")
+    is_terminal = any(h in viewer for h in terminal_hints)
+
+    try:
+        if is_terminal:
+            subprocess.run(cmd)
+        else:
+            # Detach: don't wait, don't tie stdout/stderr to this process
+            subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                             start_new_session=True)
+    except FileNotFoundError:
+        prog = cmd[0]
+        print(f"Warning: viewer '{prog}' not found in PATH - skipping open.", file=sys.stderr)
+    except Exception as e:
+        print(f"Warning: could not open viewer: {e}", file=sys.stderr)
+
 
 def _req(url, headers, params=None):
     if params:
@@ -767,7 +814,7 @@ a { color: var(--link); text-decoration: none; }
 """
 
 SHARED_CSS = """
-.thread { padding: 0; }
+.thread { padding-top: 10px; }
 .tweet-row { display: flex; padding: 12px 14px 0; }
 .tweet-row:last-child { padding-bottom: 14px; }
 .left-col { display: flex; flex-direction: column; align-items: center; flex-shrink: 0; width: 46px; margin-right: 10px; }
@@ -1086,7 +1133,7 @@ def _apply_nitter_theme(css_text):
         return ""
     return "body {\n" + "\n".join(lines) + "\n    background: var(--bg);\n    color: var(--fg);\n}\na { color: var(--link); text-decoration: none; }\n"
 
-def build_html(tweets, light=False, no_source=False, css_path=None, width=598, nitter=False):
+def build_html(tweets, light=False, no_source=False, css_path=None, width=598, nitter=False, for_browser=False):
     theme_css = LIGHT_CSS if light else DARK_CSS
     if nitter and not css_path:
         override = _apply_nitter_theme(NITTER_CSS)
@@ -1103,11 +1150,36 @@ def build_html(tweets, light=False, no_source=False, css_path=None, width=598, n
     rows = []
     for i, t in enumerate(tweets):
         rows.append(tweet_row_html(t, is_parent=(i < len(tweets)-1), no_source=no_source))
+    if for_browser:
+        # When viewed in a real browser, center the tweet card in the viewport.
+        centering_css = f"""
+html, body {{
+    width: 100%;
+    min-height: 100vh;
+    margin: 0;
+    padding: 0;
+    display: flex;
+    justify-content: center;
+    align-items: flex-start;
+    box-sizing: border-box;
+    padding-top: 2rem;
+    padding-bottom: 2rem;
+}}
+.thread {{
+    width: {width}px;
+    max-width: 100%;
+    flex-shrink: 0;
+}}
+"""
+        extra_style = centering_css
+    else:
+        extra_style = f"body {{ width: {width}px; }}"
     return f"""<!DOCTYPE html>
 <html><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
 <style>
 {base_css}
-body {{ width: {width}px; }}
+{extra_style}
 </style></head><body>
 <div class="thread">{"".join(rows)}</div>
 </body></html>"""
@@ -1184,6 +1256,13 @@ async def main():
                    help="Show full unabbreviated stat numbers (e.g. 12,345 instead of 12.3K)")
     p.add_argument("--auth-token", default=conf.get("auth_token") or os.environ.get("TWITTER_AUTH_TOKEN"), help="or use envar TWITTER_AUTH_TOKEN")
     p.add_argument("--csrf-token", default=conf.get("csrf_token") or os.environ.get("TWITTER_CSRF_TOKEN"), help="or use envar TWITTER_CSRF_TOKEN")
+    p.add_argument("--view",   action="store_true", default=_b("view"),
+                   help="Open the saved file with the configured viewer after saving")
+    p.add_argument("--viewer", default=conf.get("viewer") or None, metavar="CMD",
+                   help="Viewer command used by --view (overrides config). "
+                        "Use {} as a placeholder for the filename, e.g. 'kitty +icat {}'. "
+                        "If omitted the filename is appended automatically. "
+                        "Examples: viewnior  |  eog  |  'kitty +icat {}'  |  firefox")
     args = p.parse_args()
 
     # Apply full-stats flag globally so fmt() picks it up
@@ -1288,12 +1367,16 @@ async def main():
     if args.output_dir and not os.path.isabs(output) and not os.path.dirname(output):
         output = os.path.join(os.path.expanduser(args.output_dir), output)
 
-    html = build_html(tweets, light=args.light, no_source=args.no_source, css_path=args.css, width=args.width, nitter=args.nitter)
+    html = build_html(tweets, light=args.light, no_source=args.no_source, css_path=args.css, width=args.width, nitter=args.nitter,
+                      for_browser=bool(args.save_html))
 
     if args.save_html:
         with open(args.save_html, 'w', encoding='utf-8') as f:
             f.write(html)
         print(f"HTML saved to {args.save_html}")
+        if args.view:
+            viewer = args.viewer or "firefox"
+            open_with_viewer(args.save_html, viewer)
         return
 
     if args.html_only:
@@ -1302,6 +1385,9 @@ async def main():
 
     await render_png(html, output, width=args.width, retina=not args.no_retina)
     print(f"{output} saved")
+    if args.view:
+        viewer = args.viewer or "viewnior"
+        open_with_viewer(output, viewer)
     if args.imgur:
         url, delete_hash = upload_imgur(output)
         print(f"{url} delete: https://imgur.com/delete/{delete_hash}")
