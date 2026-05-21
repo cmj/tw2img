@@ -21,6 +21,9 @@ python tw2img.py 2041557036274475228 --guest
 # By tweet URL
 python tw2img.py https://x.com/NASA/status/2041557036274475228 --guest
 ```
+Here is a list of popular Twitter accounts sorted by most recent, and useful for guest access:\
+  https://github.com/cmj/twitter-tools/wiki/RSS%E2%80%90Friendly
+
 ### 2. Authenticated Mode (full thread + reply data)
 You need your Twitter auth tokens. Export them as environment variables:
 ```bash
