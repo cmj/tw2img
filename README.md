@@ -55,6 +55,8 @@ python tw2img.py 2054583770045386950
 | `--save-html` | Save HTML to this file instead of rendering PNG |
 | `--imgur` | Upload PNG to imgur after rendering |
 | `--dump-json` | Print raw API JSON to stdout and exit |
+| `--view` | Automatically open the rendered output file after creation |
+| `--viewer <cmd>` | Specify custom viewer executable/command (e.g., `viewnior`, `firefox`, or `kitty +icat {}`) |
 | `-c <file>` | Load config from a custom path (see Config below) |
 ## Config File
 Options can be set as persistent defaults in a config file (INI format). Config is loaded in this order - later sources override earlier ones:
@@ -115,6 +117,15 @@ python tw2img.py @NASA my_screenshot.png --guest
 
 # Custom output with @username and tweet index
 python tw2img.py @NASA 3 my_screenshot.png --guest
+
+# Open with a specific GUI viewer
+python tw2img.py @NASA --guest --view --viewer viewnior
+
+# Render directly inline inside a supported terminal (like kitty)
+python tw2img.py @NASA --guest --view --viewer "kitty +icat {}"
+
+# View directly in Firefox (ideal when combined with --save-html)
+python tw2img.py 2054583770045386950 --save-html tweet.html --view --viewer firefox
 ```
 ## Examples
 **Basic screenshot with thread (dark mode):**
@@ -128,6 +139,10 @@ python tw2img.py @NASA --guest
 **5th most recent tweet from a user:**
 ```bash
 python tw2img.py @NASA 5 --guest
+```
+**Automatically open the snapshot after rendering:**
+```bash
+python tw2img.py @NASA --guest --view
 ```
 **Upload to imgur**
 ```bash
