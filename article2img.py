@@ -10,10 +10,10 @@ Usage:
 
     # Can be used as guest (no auth)
     article2img.py --guest https://x.com/ARCRaidersGame/article/2054607629738037736
-    
-    # BEST METHOD: Save as HTML and open in Firefox
-    ./article2img-new.py --guest --view firefox --save-html article.html https://x.com/ARCRaidersGame/article/2054607629738037736
-    
+
+    # BEST METHOD: Save as HTML and open in Firefox (xdg-open, chromium, etc)
+    article2img.py --guest --view firefox --save-html article.html https://x.com/ARCRaidersGame/article/2054607629738037736
+
     # Article URL
     article2img.py https://x.com/ARCRaidersGame/article/2054607629738037736
 
@@ -23,8 +23,11 @@ Usage:
     # Load from cached API JSON
     article2img.py article.json
 
-    # Save as HTML and auto-open in Firefox (default viewer for HTML)
+    # Save as HTML (no viewer opened unless --view is also passed)
     article2img.py <url> --save-html article.html
+
+    # Save as HTML and open with firefox
+    article2img.py <url> --save-html article.html --view firefox
 
     # Save PNG and open with a viewer
     article2img.py <url> output.png --view viewnior
@@ -41,11 +44,10 @@ Config file (INI format, [tw2img] section):
     light = false
     width = 680
 
-    # Viewer to open images/HTML with after saving.
+    # Viewer to open images/HTML with after saving (only used when --view is passed).
     # For PNG:  viewnior | eog | feh | 'feh --auto-zoom' | kitty (kitty +icat)
     # For HTML: firefox | chromium | xdg-open
-    # --save-html defaults to 'firefox' when no viewer is configured.
-    viewer = viewnior
+    article_viewer = xdg-open
 """
 
 import sys, json, re, os, argparse, asyncio, urllib.request, urllib.parse, configparser
@@ -786,10 +788,10 @@ async def main():
                    default=conf.get("csrf_token") or os.environ.get("TWITTER_CSRF_TOKEN"))
     p.add_argument("--view",
                    default=conf.get("article_viewer", ""),
-                   metavar="ARTICLE_VIEWER",
+                   metavar="VIEWER",
                    help="Open the saved file with this viewer after saving. "
                         "Examples: viewnior, kitty (uses 'kitty +icat'), firefox. "
-                        "Can also be set with 'viewer = ...' in tw2img.conf.")
+                        "Can also be set with 'article_viewer = ...' in tw2img.conf.")
     args = p.parse_args()
 
     if not args.input:
@@ -867,8 +869,8 @@ async def main():
         with open(args.save_html, "w", encoding="utf-8") as f:
             f.write(html)
         print(f"HTML saved to {args.save_html}")
-        viewer = args.view or "firefox"
-        open_with_viewer(args.save_html, viewer)
+        if args.view:
+            open_with_viewer(args.save_html, args.view)
         return
 
     html = build_article_html(article, light=args.light, width=args.width)
