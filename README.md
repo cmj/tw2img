@@ -172,3 +172,9 @@ python tw2img.py 2054583770045386950 --guest --save-html tweet.html
 ```bash
 python tw2img.py --guest @barackobama --full-stats --save-html /tmp/tweet.html && firefox /tmp/tweet.html
 ```
+## Articles
+
+***Save article and auto-load rendered HTML in Firefox***
+```bash
+python article2img.py --guest --save-html article.html https://x.com/ARCRaidersGame/article/2054607629738037736
+```

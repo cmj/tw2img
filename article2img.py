@@ -785,8 +785,8 @@ async def main():
     p.add_argument("--csrf-token",
                    default=conf.get("csrf_token") or os.environ.get("TWITTER_CSRF_TOKEN"))
     p.add_argument("--view",
-                   default=conf.get("viewer", ""),
-                   metavar="VIEWER",
+                   default=conf.get("article_viewer", ""),
+                   metavar="ARTICLE_VIEWER",
                    help="Open the saved file with this viewer after saving. "
                         "Examples: viewnior, kitty (uses 'kitty +icat'), firefox. "
                         "Can also be set with 'viewer = ...' in tw2img.conf.")
