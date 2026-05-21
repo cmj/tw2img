@@ -8,17 +8,23 @@ Requires:
 Usage:
     article2img.py <article_url_or_tweet_id> [output.png] [options]
 
-    # Can be used as guest (no auth)
+    # Can be used as guest (no auth) but requires fully resolved article url
+    # This can usually be determined by the tweet_id and username (or using '_' for short)
+    # https://x.com/_/article/2054607629738037736 
     article2img.py --guest https://x.com/ARCRaidersGame/article/2054607629738037736
 
-    # BEST METHOD: Save as HTML and open in Firefox (xdg-open, chromium, etc)
-    article2img.py --guest --view firefox --save-html article.html https://x.com/ARCRaidersGame/article/2054607629738037736
+    # BEST METHOD: Save as HTML and open (uses article_viewer from conf, or xdg-open)
+    # Use the tweet url that contains the article link (or simply just the id)
+    article2img.py --guest --save-html out.html --view https://x.com/ARCRaidersGame/status/2054607629738037736
 
-    # Article URL
+    # /i/article/ entity URL (requires auth, resolved via ArticleRedirectScreenQuery)
+    article2img.py http://x.com/i/article/2017291991210668034
+
+    # Article URL (author-scoped)
     article2img.py https://x.com/ARCRaidersGame/article/2054607629738037736
 
-    # Tweet ID that links to an article
-    article2img.py 2013217215357886612
+    # Tweet ID that links to an article (requires auth)
+    article2img.py 2054607629738037736
 
     # Load from cached API JSON
     article2img.py article.json
@@ -26,13 +32,16 @@ Usage:
     # Save as HTML (no viewer opened unless --view is also passed)
     article2img.py <url> --save-html article.html
 
-    # Save as HTML and open with firefox
-    article2img.py <url> --save-html article.html --view firefox
+    # Save as HTML and open with a specific viewer
+    article2img.py <url> --save-html article.html --view --viewer firefox
 
-    # Save PNG and open with a viewer
-    article2img.py <url> output.png --view viewnior
-    article2img.py <url> output.png --view kitty        # uses: kitty +icat
-    article2img.py <url> output.png --view 'feh --auto-zoom'
+    # Save PNG and open (uses article_viewer from conf, or xdg-open)
+    article2img.py <url> output.png --view
+
+    # Save PNG and open with a specific viewer
+    article2img.py <url> output.png --view --viewer viewnior
+    article2img.py <url> output.png --view --viewer kitty        # uses: kitty +icat
+    article2img.py <url> output.png --view --viewer 'feh --auto-zoom'
 
 Environment variables (same as tw2img.py):
     export TWITTER_AUTH_TOKEN=<auth_token>
@@ -47,7 +56,7 @@ Config file (INI format, [tw2img] section):
     # Viewer to open images/HTML with after saving (only used when --view is passed).
     # For PNG:  viewnior | eog | feh | 'feh --auto-zoom' | kitty (kitty +icat)
     # For HTML: firefox | chromium | xdg-open
-    article_viewer = xdg-open
+    article_viewer = viewnior
 """
 
 import sys, json, re, os, argparse, asyncio, urllib.request, urllib.parse, configparser
@@ -60,6 +69,7 @@ UA     = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KH
 TWEET_RESULT_URL       = "https://x.com/i/api/graphql/2Acdg-VztGlHX7MjX67Ysw/TweetResultByRestId"
 TWEET_RESULT_URL_GUEST = "https://api.twitter.com/graphql/2Acdg-VztGlHX7MjX67Ysw/TweetResultByRestId"
 GUEST_TOKEN_URL        = "https://api.twitter.com/1.1/guest/activate.json"
+ARTICLE_REDIRECT_URL   = "https://x.com/i/api/graphql/zrSRXJmE1vj37AUmkh2oGg/ArticleRedirectScreenQuery"
 
 TWEET_RESULT_FEAT = {
     "creator_subscriptions_tweet_preview_api_enabled": True,
@@ -197,6 +207,35 @@ def fetch_tweet_api(tweet_id, auth_token=None, csrf_token=None, guest_token=None
     req = urllib.request.Request(url, headers=headers)
     with urllib.request.urlopen(req) as r:
         return json.loads(r.read())
+
+def fetch_article_redirect(article_entity_id, auth_token, csrf_token):
+    """Resolve a /i/article/<id> entity ID to a tweet_id + screen_name.
+
+    Uses ArticleRedirectScreenQuery and extracts:
+      .data.article_result_by_rest_id.result.metadata.author_results.result.core.screen_name
+      .data.article_result_by_rest_id.result.metadata.tweet_results.rest_id
+    Returns (tweet_id, screen_name).
+    """
+    params = {"variables": json.dumps({"articleEntityId": article_entity_id})}
+    url = ARTICLE_REDIRECT_URL + "?" + urllib.parse.urlencode(params)
+    req = urllib.request.Request(url, headers=auth_headers(auth_token, csrf_token))
+    with urllib.request.urlopen(req) as r:
+        data = json.loads(r.read())
+    result = (data.get("data", {})
+                  .get("article_result_by_rest_id", {})
+                  .get("result", {}))
+    if not result:
+        raise ValueError(f"ArticleRedirectScreenQuery returned no result for entity ID {article_entity_id!r}")
+    metadata    = result.get("metadata", {})
+    tweet_id    = metadata.get("tweet_results", {}).get("rest_id", "")
+    screen_name = (metadata.get("author_results", {})
+                           .get("result", {})
+                           .get("core", {})
+                           .get("screen_name", ""))
+    if not tweet_id:
+        raise ValueError(f"Could not extract tweet rest_id from ArticleRedirectScreenQuery response")
+    return tweet_id, screen_name
+
 
 def fmt(n):
     n = int(n or 0)
@@ -536,16 +575,6 @@ a { color: var(--link); text-decoration: none; }
     color: var(--grey);
     margin-top: 1px;
 }
-.follow-btn {
-    flex-shrink: 0;
-    font-size: 13px;
-    font-weight: 700;
-    color: var(--fg);
-    border: 1px solid var(--border);
-    border-radius: 20px;
-    padding: 4px 14px;
-    white-space: nowrap;
-}
 .stats-row {
     display: flex;
     align-items: center;
@@ -724,7 +753,6 @@ def build_article_html(article, light=False, width=680, standalone=False):
         </div>
         <div class="byline-meta">@{_escape(author['screen_name'])} · {followers_str}</div>
       </div>
-      <div class="follow-btn">Follow</div>
     </div>
 
     {stats_html}
@@ -787,11 +815,16 @@ async def main():
     p.add_argument("--csrf-token",
                    default=conf.get("csrf_token") or os.environ.get("TWITTER_CSRF_TOKEN"))
     p.add_argument("--view",
+                   action="store_true",
+                   default=False,
+                   help="Open the saved file after saving. Uses --viewer if given, "
+                        "then 'article_viewer' from tw2img.conf, then xdg-open.")
+    p.add_argument("--viewer",
                    default=conf.get("article_viewer", ""),
                    metavar="VIEWER",
-                   help="Open the saved file with this viewer after saving. "
+                   help="Override the viewer used by --view. "
                         "Examples: viewnior, kitty (uses 'kitty +icat'), firefox. "
-                        "Can also be set with 'article_viewer = ...' in tw2img.conf.")
+                        "Can also be set permanently with 'article_viewer = ...' in tw2img.conf.")
     args = p.parse_args()
 
     if not args.input:
@@ -805,13 +838,27 @@ async def main():
         with open(inp) as f:
             api_data = json.load(f)
     else:
-        m = re.search(r"/article/(\d+)", inp)
-        if m:               tweet_id = m.group(1)
-        elif inp.isdigit(): tweet_id = inp
+        m_ia = re.search(r"/i/article/(\d+)", inp)
+        if m_ia:
+            article_entity_id = m_ia.group(1)
+            if not args.auth_token or not args.csrf_token:
+                sys.exit("Error: /i/article/ URLs require authentication.\n"
+                         "Supply --auth-token / --csrf-token (or set in tw2img.conf / env vars).")
+            print(f"[*] Resolving /i/article/{article_entity_id} via ArticleRedirectScreenQuery")
+            try:
+                tweet_id, screen_name = fetch_article_redirect(
+                    article_entity_id, args.auth_token, args.csrf_token)
+            except Exception as e:
+                sys.exit(f"[!] ArticleRedirectScreenQuery failed: {e}")
+            print(f"[*] Resolved to tweet {tweet_id} (@{screen_name})")
         else:
-            m = re.search(r"(\d{10,})", inp)
-            if m:           tweet_id = m.group(1)
-            else:           sys.exit(f"Cannot parse tweet/article ID from: {inp!r}")
+            m = re.search(r"/article/(\d+)", inp)
+            if m:               tweet_id = m.group(1)
+            elif inp.isdigit(): tweet_id = inp
+            else:
+                m = re.search(r"(\d{10,})", inp)
+                if m:           tweet_id = m.group(1)
+                else:           sys.exit(f"Cannot parse tweet/article ID from: {inp!r}")
 
         if args.guest:
             print("[*] Requesting guest token")
@@ -870,7 +917,7 @@ async def main():
             f.write(html)
         print(f"HTML saved to {args.save_html}")
         if args.view:
-            open_with_viewer(args.save_html, args.view)
+            open_with_viewer(args.save_html, args.viewer or "xdg-open")
         return
 
     html = build_article_html(article, light=args.light, width=args.width)
@@ -883,7 +930,7 @@ async def main():
     await render_png(html, output, width=args.width, retina=not args.no_retina)
     print(f"{output} saved")
     if args.view:
-        open_with_viewer(output, args.view)
+        open_with_viewer(output, args.viewer or "xdg-open")
 
 
 if __name__ == "__main__":

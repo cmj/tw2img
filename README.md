@@ -176,5 +176,7 @@ python tw2img.py --guest @barackobama --full-stats --save-html /tmp/tweet.html &
 
 **Save article and auto-load rendered HTML in Firefox**
 ```bash
-python article2img.py --guest --save-html article.html https://x.com/ARCRaidersGame/article/2054607629738037736
+# BEST METHOD: Save as HTML and open (uses article_viewer from conf, or xdg-open)
+# Use the tweet url that contains the article link (or simply just the id)
+python article2img.py --guest --save-html out.html --view https://x.com/ARCRaidersGame/status/2054607629738037736
 ```
