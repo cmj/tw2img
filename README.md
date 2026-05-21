@@ -174,7 +174,7 @@ python tw2img.py --guest @barackobama --full-stats --save-html /tmp/tweet.html &
 ```
 ## Articles
 
-***Save article and auto-load rendered HTML in Firefox***
+**Save article and auto-load rendered HTML in Firefox**
 ```bash
 python article2img.py --guest --save-html article.html https://x.com/ARCRaidersGame/article/2054607629738037736
 ```
