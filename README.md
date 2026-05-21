@@ -179,4 +179,7 @@ python tw2img.py --guest @barackobama --full-stats --save-html /tmp/tweet.html &
 # BEST METHOD: Save as HTML and open (uses article_viewer from conf, or xdg-open)
 # Use the tweet url that contains the article link (or simply just the id)
 python article2img.py --guest --save-html out.html --view https://x.com/ARCRaidersGame/status/2054607629738037736
+# Simplify with an alias
+alias tw-article='article2img --guest --save-html /tmp/out.html --view > /dev/null'
+tw-article https://n/XDevelopers/status/2041295840325636551
 ```
