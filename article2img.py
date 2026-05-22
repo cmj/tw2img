@@ -66,10 +66,12 @@ from pathlib import Path
 BEARER = "AAAAAAAAAAAAAAAAAAAAANRILgAAAAAAnNwIzUejRCOuH5E6I8xnZz4puTs%3D1Zv7ttfk8LF81IUq16cHjhLTvJu4FA33AGWWjCpTnA"
 UA     = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
 
-TWEET_RESULT_URL       = "https://x.com/i/api/graphql/2Acdg-VztGlHX7MjX67Ysw/TweetResultByRestId"
-TWEET_RESULT_URL_GUEST = "https://api.twitter.com/graphql/2Acdg-VztGlHX7MjX67Ysw/TweetResultByRestId"
-GUEST_TOKEN_URL        = "https://api.twitter.com/1.1/guest/activate.json"
-ARTICLE_REDIRECT_URL   = "https://x.com/i/api/graphql/zrSRXJmE1vj37AUmkh2oGg/ArticleRedirectScreenQuery"
+TWEET_RESULT_URL        = "https://x.com/i/api/graphql/2Acdg-VztGlHX7MjX67Ysw/TweetResultByRestId"
+TWEET_RESULT_URL_GUEST  = "https://api.twitter.com/graphql/2Acdg-VztGlHX7MjX67Ysw/TweetResultByRestId"
+TWEETS_RESULT_URL       = "https://x.com/i/api/graphql/ZrFhyt8DYdkK3IY6_Le22g/TweetResultsByRestIds"
+TWEETS_RESULT_URL_GUEST = "https://api.twitter.com/graphql/ZrFhyt8DYdkK3IY6_Le22g/TweetResultsByRestIds"
+GUEST_TOKEN_URL         = "https://api.twitter.com/1.1/guest/activate.json"
+ARTICLE_REDIRECT_URL    = "https://x.com/i/api/graphql/zrSRXJmE1vj37AUmkh2oGg/ArticleRedirectScreenQuery"
 
 TWEET_RESULT_FEAT = {
     "creator_subscriptions_tweet_preview_api_enabled": True,
@@ -208,6 +210,146 @@ def fetch_tweet_api(tweet_id, auth_token=None, csrf_token=None, guest_token=None
     with urllib.request.urlopen(req) as r:
         return json.loads(r.read())
 
+
+TWEETS_RESULT_VARS = {
+    "includePromotedContent": True,
+    "withBirdwatchNotes":     True,
+    "withVoice":              True,
+    "withCommunity":          True,
+}
+
+TWEETS_FIELD_TOGGLES = {
+    "withArticleRichContentState": True,
+    "withArticlePlainText":        False,
+    "withArticleSummaryText":      True,
+    "withArticleVoiceOver":        True,
+}
+
+def _parse_tweet_result(res):
+    """Parse a single tweetResult node into the canonical embed dict.
+
+    Accepts the raw `.result` object from either TweetResultByRestId or
+    TweetResultsByRestIds.  Returns None if the node looks empty/errored.
+    """
+    # unwrap TweetWithVisibilityResults
+    if res.get("__typename") == "TweetWithVisibilityResults":
+        res = res.get("tweet", res)
+
+    tid = res.get("rest_id", "")
+    if not tid:
+        return None, None
+
+    core      = res.get("core", {}).get("user_results", {}).get("result", {})
+    core_core = core.get("core", {})
+    legacy_u  = core.get("legacy", {})
+    avatar    = core.get("avatar", {})
+    legacy_t  = res.get("legacy", {})
+
+    # note_tweet contains the full untruncated text for long-form tweets
+    note      = (res.get("note_tweet", {})
+                    .get("note_tweet_results", {})
+                    .get("result", {}))
+    full_text = note.get("text") or legacy_t.get("full_text") or legacy_t.get("text", "")
+
+    media_list = []
+    for m in legacy_t.get("extended_entities", {}).get("media", []):
+        mtype = m.get("type", "photo")
+        if mtype == "photo":
+            src = m.get("media_url_https", "")
+            if src:
+                media_list.append({"type": "photo", "url": src})
+        elif mtype in ("video", "animated_gif"):
+            variants = m.get("video_info", {}).get("variants", [])
+            best = max(
+                (v for v in variants if v.get("content_type") == "video/mp4"),
+                key=lambda v: v.get("bitrate", 0),
+                default=None,
+            )
+            thumb = m.get("media_url_https", "")
+            if best:
+                media_list.append({"type": mtype, "url": best["url"], "thumb": thumb})
+            elif thumb:
+                media_list.append({"type": "photo", "url": thumb})
+
+    return tid, {
+        "text":          full_text,
+        "name":          core_core.get("name") or legacy_u.get("name", ""),
+        "screen_name":   core_core.get("screen_name") or legacy_u.get("screen_name", ""),
+        "avatar_url":    (avatar.get("image_url") or
+                          legacy_u.get("profile_image_url_https", "")).replace("_normal", "_bigger"),
+        "is_blue":       core.get("is_blue_verified", False),
+        "created_at":    legacy_t.get("created_at", ""),
+        "reply_count":   legacy_t.get("reply_count", 0),
+        "retweet_count": legacy_t.get("retweet_count", 0),
+        "like_count":    legacy_t.get("favorite_count", 0),
+        "quote_count":   legacy_t.get("quote_count", 0),
+        "view_count":    res.get("views", {}).get("count", 0),
+        "media":         media_list,
+    }
+
+
+def fetch_tweets_batch(tweet_ids, auth_token, csrf_token):
+    """Fetch multiple tweets in one request via TweetResultsByRestIds (auth required).
+
+    Returns a dict mapping tweet_id (str) -> parsed tweet data dict.
+    Missing / errored tweets are silently skipped.
+    """
+    if not tweet_ids:
+        return {}
+
+    params = {
+        "variables":    json.dumps({**TWEETS_RESULT_VARS, "tweetIds": list(tweet_ids)}),
+        "features":     json.dumps(TWEET_RESULT_FEAT),
+        "fieldToggles": json.dumps(TWEETS_FIELD_TOGGLES),
+    }
+    url = TWEETS_RESULT_URL + "?" + urllib.parse.urlencode(params)
+    req = urllib.request.Request(url, headers=auth_headers(auth_token, csrf_token))
+    try:
+        with urllib.request.urlopen(req) as r:
+            data = json.loads(r.read())
+    except Exception as e:
+        print(f"[!] TweetResultsByRestIds failed: {e}")
+        return {}
+
+    results = {}
+    for item in data.get("data", {}).get("tweetResult", []):
+        tid, parsed = _parse_tweet_result(item.get("result", {}))
+        if tid and parsed:
+            results[tid] = parsed
+    return results
+
+
+def fetch_tweets_guest(tweet_ids, guest_token):
+    """Fetch embedded tweets one-by-one via TweetResultByRestId (guest mode).
+
+    The batch endpoint requires auth; guest mode must call the single-tweet
+    endpoint for each ID individually.  Returns the same dict format as
+    fetch_tweets_batch.
+    """
+    results = {}
+    for tweet_id in tweet_ids:
+        print(f"  [*] Fetching embedded tweet {tweet_id} (guest)")
+        params = {
+            "variables":    json.dumps({**TWEET_RESULT_VARS, "tweetId": tweet_id}),
+            "features":     json.dumps(TWEET_RESULT_FEAT),
+            "fieldToggles": json.dumps(FIELD_TOGGLES),
+        }
+        url = TWEET_RESULT_URL_GUEST + "?" + urllib.parse.urlencode(params)
+        req = urllib.request.Request(url, headers=guest_headers(guest_token))
+        try:
+            with urllib.request.urlopen(req) as r:
+                data = json.loads(r.read())
+        except Exception as e:
+            print(f"  [!] Could not fetch tweet {tweet_id}: {e}")
+            continue
+        res = data.get("data", {}).get("tweetResult", {}).get("result", {})
+        tid, parsed = _parse_tweet_result(res)
+        if tid and parsed:
+            results[tid] = parsed
+        else:
+            print(f"  [!] Empty result for tweet {tweet_id}")
+    return results
+
 def fetch_article_redirect(article_entity_id, auth_token, csrf_token):
     """Resolve a /i/article/<id> entity ID to a tweet_id + screen_name.
 
@@ -247,6 +389,23 @@ def abs_time(created_at):
     if not created_at: return ""
     dt = datetime.strptime(created_at, "%a %b %d %H:%M:%S +0000 %Y")
     return dt.strftime("%b %d, %Y · %I:%M %p UTC").replace(" 0", " ")
+
+def _collect_tweet_ids(content_state):
+    """Return a list of tweetId strings referenced by TWEET entities in the content_state."""
+    entity_map = content_state.get("entityMap", {})
+    if isinstance(entity_map, list):
+        if entity_map and isinstance(entity_map[0], dict) and "key" in entity_map[0]:
+            entity_map = {str(e["key"]): e["value"] for e in entity_map}
+        else:
+            entity_map = {str(i): e for i, e in enumerate(entity_map)}
+    ids = []
+    for ent in entity_map.values():
+        if ent.get("type") == "TWEET":
+            tid = str(ent.get("data", {}).get("tweetId", ""))
+            if tid and tid not in ids:
+                ids.append(tid)
+    return ids
+
 
 def extract_article(api_data):
     result = api_data["data"]["tweetResult"]["result"]
@@ -318,6 +477,7 @@ def extract_article(api_data):
         "media_map":     media_map,
         "cover_url":     cover_url,
         "stats":         stats,
+        "tweet_ids":     _collect_tweet_ids(content_state),
     }
 
 BLOCK_TAGS = {
@@ -364,7 +524,7 @@ def _apply_inline_styles(text, inline_style_ranges):
         parts.extend(reversed(closes[i]))
     return "".join(parts)
 
-def _block_to_html(block, entity_map, media_map):
+def _block_to_html(block, entity_map, media_map, tweet_cache=None):
     btype = block.get("type", "unstyled")
     text  = block.get("text", "")
     isr   = block.get("inlineStyleRanges", [])
@@ -399,6 +559,11 @@ def _block_to_html(block, entity_map, media_map):
                 if src:
                     return f'<figure><img src="{src}" alt="{_escape(caption)}">{cap}</figure>'
 
+            if etype == "TWEET":
+                tid        = str(data.get("tweetId", ""))
+                tweet_data = (tweet_cache or {}).get(tid)
+                return render_tweet_embed(tid, tweet_data)
+
             if etype == "LINK":
                 href = data.get("url", "#")
                 return f'<p><a href="{_escape(href)}">{_escape(href)}</a></p>'
@@ -428,11 +593,10 @@ def _block_to_html(block, entity_map, media_map):
 
     return f"<{tag}>{inner}</{tag}>"
 
-def content_state_to_html(content_state, media_map):
+def content_state_to_html(content_state, media_map, tweet_cache=None):
     blocks     = content_state.get("blocks", [])
     entity_map = content_state.get("entityMap", {})
 
-    # normalise list-form entityMap (X API returns [{key, value}, ...])
     if isinstance(entity_map, list):
         if entity_map and isinstance(entity_map[0], dict) and "key" in entity_map[0] and "value" in entity_map[0]:
             entity_map = {str(e["key"]): e["value"] for e in entity_map}
@@ -449,12 +613,12 @@ def content_state_to_html(content_state, media_map):
             list_tag = "ul" if btype == "unordered-list-item" else "ol"
             items = []
             while i < len(blocks) and blocks[i].get("type") == btype:
-                items.append(_block_to_html(blocks[i], entity_map, media_map))
+                items.append(_block_to_html(blocks[i], entity_map, media_map, tweet_cache))
                 i += 1
             html_parts.append(f"<{list_tag}>{''.join(items)}</{list_tag}>")
             continue
 
-        frag = _block_to_html(block, entity_map, media_map)
+        frag = _block_to_html(block, entity_map, media_map, tweet_cache)
         if frag:
             html_parts.append(frag)
         i += 1
@@ -485,6 +649,77 @@ def verified_svg(is_blue):
             '<circle cx="9" cy="9" r="9" fill="#1d9bf0"/>'
             '<polyline points="4.5,10 7.5,13 13.5,7" stroke="white" stroke-width="2.2" '
             'fill="none" stroke-linecap="round" stroke-linejoin="round"/></svg>')
+
+X_LOGO_SVG = ('<svg width="18" height="18" viewBox="0 0 300 300" xmlns="http://www.w3.org/2000/svg" '
+              'class="tweet-embed-xlogo">'
+              '<path d="M178.57 127.15 290.27 0h-26.46l-97.03 110.38L89.34 0H0l117.13 166.93L0 300.25h26.46l102.4-116.59'
+              ' 81.8 116.59H300L178.57 127.15Zm-36.26 41.26-11.87-16.61L36.16 19.5h40.69l76.28 106.73 11.87 16.61'
+              ' 99.06 138.63h-40.69l-80.06-112.06Z" fill="currentColor"/>'
+              '</svg>')
+
+def render_tweet_embed(tweet_id, tweet_data):
+    """Return an HTML string for an embedded tweet card.
+
+    tweet_data is the dict returned by fetch_tweets_batch, or None if unavailable.
+    """
+    if not tweet_data:
+        url = f"https://x.com/i/web/status/{tweet_id}"
+        return (f'<div class="tweet-embed-missing">'
+                f'Tweet <a href="{url}">{_escape(tweet_id)}</a> could not be loaded.</div>')
+
+    grey = "var(--grey)"
+    tick = verified_svg(tweet_data.get("is_blue", False))
+
+    # strip trailing t.co URLs that are just the media links twitter appends
+    text = tweet_data.get("text", "")
+    text = re.sub(r"\s*https://t\.co/\S+$", "", text).strip()
+
+    # media grid
+    media_items = tweet_data.get("media", [])
+    photos = [m for m in media_items if m["type"] == "photo"]
+    videos = [m for m in media_items if m["type"] in ("video", "animated_gif")]
+
+    media_html = ""
+    render_media = photos + [{"type": "photo", "url": v.get("thumb", "")} for v in videos if v.get("thumb")]
+    if len(render_media) == 1:
+        src = _escape(render_media[0]["url"])
+        media_html = f'<div class="tweet-embed-media"><img src="{src}" alt=""></div>'
+    elif len(render_media) >= 2:
+        cols = min(len(render_media), 4)
+        cls  = f"cols-{cols}"
+        imgs = "".join(f'<img src="{_escape(m["url"])}" alt="">' for m in render_media[:4])
+        media_html = f'<div class="tweet-embed-media-grid {cls}">{imgs}</div>'
+
+    date_str = abs_time(tweet_data.get("created_at", ""))
+    sn  = _escape(tweet_data.get("screen_name", ""))
+    url = f"https://x.com/{sn}/status/{tweet_id}"
+
+    footer = (
+        f'<div class="tweet-embed-footer">'
+        f'<span class="tweet-embed-stat">{icon_svg("comment",  13, grey)} {fmt(tweet_data.get("reply_count",   0))}</span>'
+        f'<span class="tweet-embed-stat">{icon_svg("retweet",  13, grey)} {fmt(tweet_data.get("retweet_count", 0))}</span>'
+        f'<span class="tweet-embed-stat">{icon_svg("heart",    13, grey)} {fmt(tweet_data.get("like_count",    0))}</span>'
+        f'<span class="tweet-embed-stat">{icon_svg("views",    13, grey)} {fmt(tweet_data.get("view_count",    0))}</span>'
+        f'<span class="tweet-embed-date">{_escape(date_str)}</span>'
+        f'</div>'
+    )
+
+    avatar_url = _escape(tweet_data.get("avatar_url", ""))
+    name       = _escape(tweet_data.get("name", ""))
+
+    return f"""<div class="tweet-embed">
+  <div class="tweet-embed-header">
+    <img class="tweet-embed-avatar" src="{avatar_url}" alt="">
+    <div class="tweet-embed-names">
+      <div class="tweet-embed-name">{name}{tick}</div>
+      <div class="tweet-embed-handle">@{sn}</div>
+    </div>
+    <a href="{_escape(url)}" title="View on X">{X_LOGO_SVG}</a>
+  </div>
+  <div class="tweet-embed-text">{_escape(text)}</div>
+  {media_html}
+  {footer}
+</div>"""
 
 ARTICLE_CSS = """
 * { box-sizing: border-box; margin: 0; padding: 0; }
@@ -660,10 +895,113 @@ a { color: var(--link); text-decoration: none; }
     padding: 6px 20px 0;
     line-height: 1.4;
 }
-
 .article-body strong { font-weight: 700; }
 .article-body em     { font-style: italic; }
 .article-body br     { display: block; margin-top: 6px; }
+.tweet-embed {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Arial, sans-serif;
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 14px 16px 10px;
+    margin: 18px 0;
+    background: var(--bg);
+    line-height: 1.45;
+    overflow: hidden;
+}
+.tweet-embed-header {
+    display: flex;
+    align-items: center;
+    gap: 9px;
+    margin-bottom: 8px;
+}
+.tweet-embed-avatar {
+    width: 36px; height: 36px;
+    border-radius: 50%;
+    flex-shrink: 0;
+    object-fit: cover;
+}
+.tweet-embed-names { flex: 1; min-width: 0; line-height: 1.3; }
+.tweet-embed-name {
+    font-size: 14px;
+    font-weight: 700;
+    color: var(--fg);
+    display: flex;
+    align-items: center;
+    gap: 3px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+.tweet-embed-handle {
+    font-size: 13px;
+    color: var(--grey);
+}
+.tweet-embed-xlogo {
+    flex-shrink: 0;
+    opacity: 0.7;
+}
+.tweet-embed-text {
+    font-size: 15px;
+    color: var(--fg);
+    margin-bottom: 10px;
+    white-space: pre-wrap;
+    word-break: break-word;
+}
+.tweet-embed-media {
+    margin: 8px -16px 0;
+    overflow: hidden;
+}
+.tweet-embed-media img {
+    width: 100%;
+    display: block;
+    max-height: 280px;
+    object-fit: cover;
+}
+.tweet-embed-media-grid {
+    display: grid;
+    gap: 2px;
+    margin: 8px -16px 0;
+    overflow: hidden;
+}
+.tweet-embed-media-grid.cols-2 { grid-template-columns: 1fr 1fr; }
+.tweet-embed-media-grid.cols-3 { grid-template-columns: 1fr 1fr 1fr; }
+.tweet-embed-media-grid.cols-4 { grid-template-columns: 1fr 1fr; }
+.tweet-embed-media-grid img {
+    width: 100%;
+    display: block;
+    height: 140px;
+    object-fit: cover;
+}
+.tweet-embed-footer {
+    display: flex;
+    align-items: center;
+    gap: 16px;
+    margin-top: 10px;
+    padding-top: 8px;
+    border-top: 1px solid var(--border);
+    font-size: 13px;
+    color: var(--grey);
+}
+.tweet-embed-stat {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+}
+.tweet-embed-date {
+    margin-left: auto;
+    font-size: 12px;
+    color: var(--muted);
+}
+.tweet-embed-missing {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Arial, sans-serif;
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 12px 16px;
+    margin: 18px 0;
+    color: var(--grey);
+    font-size: 13px;
+    font-style: italic;
+}
 """
 
 
@@ -687,13 +1025,15 @@ html, body {
 """
 
 
-def build_article_html(article, light=False, width=680, standalone=False):
+def build_article_html(article, light=False, width=680, standalone=False, tweet_cache=None):
     body_class = "light" if light else ""
 
     author = article["author"]
     title  = article["title"]
     stats  = article.get("stats", {})
-    body_html = content_state_to_html(article["content_state"], article["media_map"])
+    body_html = content_state_to_html(
+        article["content_state"], article["media_map"], tweet_cache=tweet_cache
+    )
 
     # cover
     cover_url = article.get("cover_url", "")
@@ -907,12 +1247,31 @@ async def main():
 
     article = extract_article(api_data)
 
+    # Guest mode: TweetResultsByRestIds requires auth, so fetch one-by-one
+    #             via TweetResultByRestId (the single-tweet guest endpoint).
+    # Auth mode:  fetch all IDs in a single TweetResultsByRestIds request.
+    tweet_cache = {}
+    tweet_ids   = article.get("tweet_ids", [])
+    if tweet_ids:
+        print(f"[*] Fetching {len(tweet_ids)} embedded tweet(s): {', '.join(tweet_ids)}")
+        try:
+            if args.guest:
+                tweet_cache = fetch_tweets_guest(tweet_ids, guest_token)
+            else:
+                tweet_cache = fetch_tweets_batch(
+                    tweet_ids, args.auth_token, args.csrf_token)
+            print(f"[*] Retrieved {len(tweet_cache)}/{len(tweet_ids)} embedded tweet(s)")
+        except Exception as e:
+            print(f"[!] Could not fetch embedded tweets: {e}")
+
     sn     = article["author"]["screen_name"]
     tid    = api_data["data"]["tweetResult"]["result"].get("rest_id", "article")
     output = args.output or f"{sn}-article-{tid}.png"
 
     if args.save_html:
-        html = build_article_html(article, light=args.light, width=args.width, standalone=True)
+        html = build_article_html(
+            article, light=args.light, width=args.width,
+            standalone=True, tweet_cache=tweet_cache)
         with open(args.save_html, "w", encoding="utf-8") as f:
             f.write(html)
         print(f"HTML saved to {args.save_html}")
@@ -920,7 +1279,8 @@ async def main():
             open_with_viewer(args.save_html, args.viewer or "xdg-open")
         return
 
-    html = build_article_html(article, light=args.light, width=args.width)
+    html = build_article_html(
+        article, light=args.light, width=args.width, tweet_cache=tweet_cache)
 
     if args.html_only:
         print(html)
