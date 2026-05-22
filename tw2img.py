@@ -902,7 +902,21 @@ def quote_block_html(qt):
     mlist = qt["ext_entities"].get("media", [])
     if mlist:
         m = mlist[0]
-        media = f'<div class="quote-media"><img src="{m["media_url_https"]}"></div>'
+        if m["type"] in ("video", "animated_gif"):
+            vi = m.get("video_info", {})
+            dur_ms = vi.get("duration_millis", 0)
+            dur_label = _fmt_duration(dur_ms) if m["type"] == "video" else ""
+            dur_html = f'<div class="vid-duration">{dur_label}</div>' if dur_label else ""
+            media = (
+                f'<div class="quote-media">'
+                f'<div class="video-wrap" style="position:relative;">'
+                f'<img src="{m["media_url_https"]}">'
+                f'<div class="play-overlay">{PLAY_SVG}</div>'
+                f'{dur_html}'
+                f'</div></div>'
+            )
+        else:
+            media = f'<div class="quote-media"><img src="{m["media_url_https"]}"></div>'
     return f"""<div class="quote-block">
   <div class="quote-header">
     <img class="quote-avatar" src="{u["avatar_url"]}">
