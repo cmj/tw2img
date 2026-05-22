@@ -707,7 +707,19 @@ def media_html(ext_entities):
                 f'</div>'
             )
 
-    if len(parts) == 4:
+    if len(parts) == 5:
+        return f'''<div class="media-grid-5">
+            <div class="row-top">
+                <div class="grid-item">{parts[0]}</div>
+                <div class="grid-item">{parts[1]}</div>
+            </div>
+            <div class="row-bottom">
+                <div class="grid-item">{parts[2]}</div>
+                <div class="grid-item">{parts[3]}</div>
+                <div class="grid-item">{parts[4]}</div>
+            </div>
+        </div>'''
+    elif len(parts) == 4:
         return f'''<div class="media-grid-2x2">
             <div class="grid-item">{parts[0]}</div>
             <div class="grid-item">{parts[1]}</div>
@@ -847,6 +859,11 @@ SHARED_CSS = """
 .media-grid-3 .grid-item { position: relative; overflow: hidden; }
 .media-grid-3 .grid-item img { width: 100%; height: 100%; object-fit: cover; }
 .media-grid-3 .span-2 { grid-column: 1 / span 2; }
+.media-grid-5 { display: grid; grid-template-columns: 1fr 1fr; gap: 3px; margin: 6px 0; border-radius: 10px; overflow: hidden; }
+.media-grid-5 .grid-item { position: relative; overflow: hidden; }
+.media-grid-5 .grid-item img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.media-grid-5 .row-top { grid-column: 1 / span 2; display: grid; grid-template-columns: 1fr 1fr; gap: 3px; }
+.media-grid-5 .row-bottom { grid-column: 1 / span 2; display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 3px; }
 .attachment img { width: 100%; display: block; }
 .video-wrap { position: relative; }
 .play-overlay { position: absolute; top: 0; left: 0; right: 0; bottom: 0; display: flex; align-items: center; justify-content: center; pointer-events: none; }
