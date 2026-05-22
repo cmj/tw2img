@@ -650,12 +650,6 @@ def verified_svg(is_blue):
             '<polyline points="4.5,10 7.5,13 13.5,7" stroke="white" stroke-width="2.2" '
             'fill="none" stroke-linecap="round" stroke-linejoin="round"/></svg>')
 
-X_LOGO_SVG = ('<svg width="18" height="18" viewBox="0 0 300 300" xmlns="http://www.w3.org/2000/svg" '
-              'class="tweet-embed-xlogo">'
-              '<path d="M178.57 127.15 290.27 0h-26.46l-97.03 110.38L89.34 0H0l117.13 166.93L0 300.25h26.46l102.4-116.59'
-              ' 81.8 116.59H300L178.57 127.15Zm-36.26 41.26-11.87-16.61L36.16 19.5h40.69l76.28 106.73 11.87 16.61'
-              ' 99.06 138.63h-40.69l-80.06-112.06Z" fill="currentColor"/>'
-              '</svg>')
 
 def render_tweet_embed(tweet_id, tweet_data):
     """Return an HTML string for an embedded tweet card.
@@ -663,7 +657,7 @@ def render_tweet_embed(tweet_id, tweet_data):
     tweet_data is the dict returned by fetch_tweets_batch, or None if unavailable.
     """
     if not tweet_data:
-        url = f"https://x.com/i/web/status/{tweet_id}"
+        url = f"https://nitter.net/i/status/{tweet_id}"
         return (f'<div class="tweet-embed-missing">'
                 f'Tweet <a href="{url}">{_escape(tweet_id)}</a> could not be loaded.</div>')
 
@@ -692,7 +686,7 @@ def render_tweet_embed(tweet_id, tweet_data):
 
     date_str = abs_time(tweet_data.get("created_at", ""))
     sn  = _escape(tweet_data.get("screen_name", ""))
-    url = f"https://x.com/{sn}/status/{tweet_id}"
+    url = f"https://nitter.net/{sn}/status/{tweet_id}"
 
     footer = (
         f'<div class="tweet-embed-footer">'
@@ -700,7 +694,7 @@ def render_tweet_embed(tweet_id, tweet_data):
         f'<span class="tweet-embed-stat">{icon_svg("retweet",  13, grey)} {fmt(tweet_data.get("retweet_count", 0))}</span>'
         f'<span class="tweet-embed-stat">{icon_svg("heart",    13, grey)} {fmt(tweet_data.get("like_count",    0))}</span>'
         f'<span class="tweet-embed-stat">{icon_svg("views",    13, grey)} {fmt(tweet_data.get("view_count",    0))}</span>'
-        f'<span class="tweet-embed-date">{_escape(date_str)}</span>'
+        f'<a class="tweet-embed-date" href="{_escape(url)}" title="View on Nitter">{_escape(date_str)}</a>'
         f'</div>'
     )
 
@@ -714,9 +708,8 @@ def render_tweet_embed(tweet_id, tweet_data):
       <div class="tweet-embed-name">{name}{tick}</div>
       <div class="tweet-embed-handle">@{sn}</div>
     </div>
-    <a href="{_escape(url)}" title="View on X">{X_LOGO_SVG}</a>
   </div>
-  <div class="tweet-embed-text">{_escape(text)}</div>
+  <a class="tweet-embed-text-link" href="{_escape(url)}"><div class="tweet-embed-text">{_escape(text)}</div></a>
   {media_html}
   {footer}
 </div>"""
@@ -895,9 +888,11 @@ a { color: var(--link); text-decoration: none; }
     padding: 6px 20px 0;
     line-height: 1.4;
 }
+
 .article-body strong { font-weight: 700; }
 .article-body em     { font-style: italic; }
 .article-body br     { display: block; margin-top: 6px; }
+
 .tweet-embed {
     font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Arial, sans-serif;
     border: 1px solid var(--border);
@@ -936,10 +931,11 @@ a { color: var(--link); text-decoration: none; }
     font-size: 13px;
     color: var(--grey);
 }
-.tweet-embed-xlogo {
-    flex-shrink: 0;
-    opacity: 0.7;
+.tweet-embed-text-link {
+    display: block;
+    text-decoration: none;
 }
+.tweet-embed-text-link:hover .tweet-embed-text { text-decoration: none; }
 .tweet-embed-text {
     font-size: 15px;
     color: var(--fg);
@@ -991,7 +987,9 @@ a { color: var(--link); text-decoration: none; }
     margin-left: auto;
     font-size: 12px;
     color: var(--muted);
+    text-decoration: none;
 }
+.tweet-embed-date:hover { text-decoration: underline; }
 .tweet-embed-missing {
     font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Arial, sans-serif;
     border: 1px solid var(--border);
