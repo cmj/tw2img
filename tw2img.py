@@ -1235,7 +1235,7 @@ async def render_png(html, output_path, width=598, retina=True):
         await thread.screenshot(path=output_path)
         await browser.close()
 
-async def main():
+async def _main():
     # Pre-parse -c/--config before building the full parser so it can seed defaults.
     # We do a lightweight scan of sys.argv rather than a separate ArgumentParser
     # to avoid interfering with positional arguments.
@@ -1427,5 +1427,9 @@ async def main():
             with open(log_path, "a") as f:
                 f.write(f"{url} delete: https://imgur.com/delete/{delete_hash} {output}\n")
 
+def main():
+    asyncio.run(_main())
+
+
 if __name__ == "__main__":
-    asyncio.run(main())
+    main()

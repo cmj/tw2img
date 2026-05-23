@@ -1124,7 +1124,7 @@ async def render_png(html, output_path, width=680, retina=True):
         await wrapper.screenshot(path=output_path)
         await browser.close()
 
-async def main():
+async def _main():
     conf = load_config()
 
     p = argparse.ArgumentParser(
@@ -1291,5 +1291,9 @@ async def main():
         open_with_viewer(output, args.viewer or "xdg-open")
 
 
+def main():
+    asyncio.run(_main())
+
+
 if __name__ == "__main__":
-    asyncio.run(main())
+    main()
