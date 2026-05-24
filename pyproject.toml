@@ -16,6 +16,10 @@ dependencies = [
 [project.scripts]
 tw2img = "tw2img:main"
 article2img = "article2img:main"
+tw2img-install-config = "tw2img_post_install:install_config"
 
 [tool.setuptools]
-py-modules = ["tw2img", "article2img"]
+py-modules = ["tw2img", "article2img", "tw2img_post_install"]
+
+[tool.setuptools.package-data]
+"*" = ["tw2img.conf"]
