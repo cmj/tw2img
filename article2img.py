@@ -500,7 +500,7 @@ def _escape(text):
 
 def _apply_inline_styles(text, inline_style_ranges):
     if not text or not inline_style_ranges:
-        return _escape(text)
+        return _escape(text).replace("\n", "<br>")
     n = len(text)
     opens  = [[] for _ in range(n)]
     closes = [[] for _ in range(n)]
@@ -520,7 +520,10 @@ def _apply_inline_styles(text, inline_style_ranges):
     parts = []
     for i, ch in enumerate(text):
         parts.extend(opens[i])
-        parts.append(_escape(ch))
+        if ch == "\n":
+            parts.append("<br>")
+        else:
+            parts.append(_escape(ch))
         parts.extend(reversed(closes[i]))
     return "".join(parts)
 
@@ -828,7 +831,7 @@ a { color: var(--link); text-decoration: none; }
 }
 .article-body {
     padding: 20px 20px 36px;
-    font-family: Georgia, "Times New Roman", Times, serif;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
     font-size: 16px;
     line-height: 1.75;
     color: var(--fg);
