@@ -89,6 +89,7 @@ tw2img 2054583770045386950
 | `--save-html` | Save HTML to this file instead of rendering PNG |
 | `--imgur` | Upload PNG to imgur after rendering |
 | `--dump-json` | Print raw API JSON to stdout and exit |
+| `--print-line` | Print a one-line text summary of the focal tweet to stdout |
 | `--view` | Automatically open the rendered output file after creation |
 | `--viewer <cmd>` | Specify custom viewer executable/command (e.g., `viewnior`, `firefox`, or `kitty +icat {}`) |
 | `-c <file>` | Load config from a custom path (see Config below) |
@@ -177,8 +178,12 @@ tw2img @NASA --guest --view --viewer "kitty +icat {}"
 
 # View directly in Firefox (ideal when combined with --save-html)
 tw2img 2054583770045386950 --save-html tweet.html --view --viewer firefox
-```
 
+# Print a one-line text summary of the focal tweet to stdout
+tw2img 21 --print-line --guest
+@biz (Biz Stone) ✔ just setting up my twttr | ↳ 153 ⇅ 4.8K ‟ 302 ♥ 4.3K | Web Client | https://x.com/i/status/21
+
+```
 ---
 
 ## Examples

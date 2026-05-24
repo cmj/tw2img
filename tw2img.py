@@ -631,6 +631,109 @@ def abs_time(created_at):
     dt = datetime.strptime(created_at, "%a %b %d %H:%M:%S +0000 %Y")
     return dt.strftime("%b %d, %Y · %I:%M %p UTC").replace(" 0", " ")
 
+def format_tweet_line(tweet, nsfw=False, birdwatch=False):
+    """Return a single summary line for a parsed tweet dict.
+
+    Badge colour rules (ANSI bg/fg):
+      Business ✔    gold   bg=\033[43m  fg=\033[30m  (black on yellow)
+      Government ✔  teal  bg=\033[46m  fg=\033[30m  (black on cyan)
+      Blue ✔        blue  bg=\033[44m  fg=\033[97m  (white on blue)
+      No badge      plain, no color
+    """
+    RESET  = "\033[0m"
+    RED    = "\033[31m"
+
+    user = tweet["user"]
+    sn   = user["screen_name"]
+    name = user["name"]
+    vtype = user.get("verified_type")
+    blue  = user.get("is_blue_verified", False)
+
+    # some terminals, like kitty default to font with a small cell width that chops
+    # the checkmark in half. choose a better font like Nerd Font, or force a wider
+    # width for the checkmark with: kitty -o "narrow_symbols U+2714 1" (or set
+    # in kitty config)
+    if vtype == "Business":
+        badge = " \033[43m\033[30m✔\033[0m "   # black on yellow
+    elif vtype == "Government":
+        badge = " \033[46m\033[30m✔\033[0m "   # black on cyan
+    elif blue:
+        badge = " \033[44m\033[97m✔\033[0m "   # white on blue
+    else:
+        badge = " "
+
+    entities     = tweet.get("entities", {})
+    ext_entities = tweet.get("ext_entities", {})
+    text = tweet["full_text"]
+
+    media_urls = {m["url"] for m in ext_entities.get("media", [])}
+    for u in entities.get("urls", []):
+        if u["url"] in media_urls:
+            text = text.replace(u["url"], "")
+        else:
+            text = text.replace(u["url"], u.get("expanded_url", u["url"]))
+    for url in media_urls:
+        text = text.replace(url, "")
+
+    text = re.sub(r"  +", " ", text).strip()
+    text = text.replace("&amp;", "&").replace("&gt;", ">").replace("&lt;", "<")
+    text = re.sub(r"\\n\\n|\\n|\n\n|\n", " ", text)
+
+    quoted_part = ""
+    qt = tweet.get("quoted")
+    if qt and not qt.get("__tombstone"):
+        qt_sn   = qt.get("user", {}).get("screen_name", "")
+        qt_text = qt.get("full_text", "")
+        qt_ents = qt.get("entities", {})
+        qt_ext  = qt.get("ext_entities", {})
+        qt_media_urls = {m["url"] for m in qt_ext.get("media", [])}
+        for u in qt_ents.get("urls", []):
+            if u["url"] in qt_media_urls:
+                qt_text = qt_text.replace(u["url"], "")
+            else:
+                qt_text = qt_text.replace(u["url"], u.get("expanded_url", u["url"]))
+        for url in qt_media_urls:
+            qt_text = qt_text.replace(url, "")
+        qt_text = re.sub(r"  +", " ", qt_text).strip()
+        qt_text = qt_text.replace("&amp;", "&").replace("&gt;", ">").replace("&lt;", "<")
+        qt_text = re.sub(r"\\n\\n|\\n|\n\n|\n", " ", qt_text)
+        quoted_part = f" [@{qt_sn}] {qt_text}"
+
+    media_items = ext_entities.get("media", [])
+    media_part = ""
+    if media_items:
+        mtype  = media_items[0].get("type", "photo")
+        plural = "s" if len(media_items) >= 2 else ""
+        media_part = f" [{mtype}{plural}]"
+
+    replies = fmt(tweet.get("reply_count",   0))
+    rts     = fmt(tweet.get("retweet_count", 0))
+    quotes  = fmt(tweet.get("quote_count",   0))
+    likes   = fmt(tweet.get("like_count",    0))
+    views   = tweet.get("view_count")
+    views_s = f" 🡕 {fmt(views)}" if views else ""
+
+    source = tweet.get("source", "")
+
+    loc = user.get("location", "").strip()
+    loc_part = f"| {loc} " if loc else ""
+
+    nsfw_part = f"| {RED}NSFW{RESET} " if nsfw else ""
+
+    bw_part = "| birdwatch " if (birdwatch or tweet.get("birdwatch")) else ""
+
+    tid = tweet.get("id", "")
+    url = f"https://x.com/i/status/{tid}" if tid else ""
+
+    sep = ": " if not badge else ""
+    header = f"@{sn} ({name}){badge}{sep}"
+    body   = f"{text}{quoted_part}{media_part}"
+    stats  = f"↳ {replies} ⇅ {rts} ‟ {quotes} ♥ {likes}{views_s}"
+    footer = f"| {stats} | {source} {loc_part}{nsfw_part}{bw_part}| {url}"
+
+    return f"{header}{body} {footer}"
+
+
 def upload_imgur(path):
     import uuid
     client_id = os.environ.get("IMGUR_CLIENT_ID", "17385cf5260cef9")
@@ -1309,6 +1412,8 @@ async def _main():
                    help="Directory to save output PNG (default: current working directory)")
     p.add_argument("--imgur",      action="store_true", default=_b("imgur"), help="Upload PNG to imgur after rendering")
     p.add_argument("--dump-json",  action="store_true", default=_b("dump_json"), help="Print raw API JSON to stdout and exit")
+    p.add_argument("--print-line", action="store_true", default=_b("print_line"),
+                   help="Print a one-line text summary of the focal tweet to stdout (implies no PNG unless other flags set)")
     p.add_argument("--imgur-log",  default=conf.get("imgur_log") or None, metavar="FILE",
                    help="Append imgur URL + delete link to FILE after each upload (e.g. ~/tw2imgur_urls)")
     p.add_argument("--full-stats", action="store_true", default=_b("full_stats"),
@@ -1409,6 +1514,11 @@ async def _main():
 
     tweet_id = tweets[-1]["id"]
     focal = tweets[-1]
+
+    if args.print_line:
+        print(format_tweet_line(focal))
+        return
+
     user_name = focal["user"]["screen_name"]
     if not args.output and (focal.get("rt_by_user") or focal.get("is_rt")):
         if focal.get("rt_by_user"):
