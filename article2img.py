@@ -165,6 +165,35 @@ def open_with_viewer(path, viewer):
         print(f"[!] Could not open viewer: {e}")
 
 
+def resolve_output_path(path, mode):
+    """Apply duplicate_files logic to *path*.
+
+    mode values (from config/default):
+      'overwrite'  - return path unchanged (default, existing file is replaced)
+      'increment'  - if file exists, append -1, -2, ... before the extension
+                     e.g. nasa-article-123.png -> nasa-article-123-1.png -> nasa-article-123-2.png
+      'epoch'      - if file exists, append the current Unix epoch before the extension
+                     e.g. nasa-article-123.png -> nasa-article-123-1779464539.png
+    """
+    import time as _time
+    from pathlib import Path as _Path
+    p = _Path(path)
+    if mode == "overwrite" or not p.exists():
+        return path
+    stem = p.stem
+    suffix = p.suffix
+    parent = p.parent
+    if mode == "epoch":
+        new_path = parent / f"{stem}-{int(_time.time())}{suffix}"
+    else:  # increment
+        counter = 1
+        while True:
+            new_path = parent / f"{stem}-{counter}{suffix}"
+            if not new_path.exists():
+                break
+            counter += 1
+    return str(new_path)
+
 def auth_headers(auth_token, csrf_token):
     return {
         "Authorization": f"Bearer {BEARER}",
@@ -1268,6 +1297,11 @@ async def _main():
     sn     = article["author"]["screen_name"]
     tid    = api_data["data"]["tweetResult"]["result"].get("rest_id", "article")
     output = args.output or f"{sn}-article-{tid}.png"
+
+    # Apply duplicate_files handling (only when output was auto-generated, not explicit)
+    if not args.output:
+        dup_mode = conf.get("duplicate_files", "overwrite").strip().lower()
+        output = resolve_output_path(output, dup_mode)
 
     if args.save_html:
         html = build_article_html(

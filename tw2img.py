@@ -186,6 +186,34 @@ def _req(url, headers, params=None):
     with urllib.request.urlopen(req) as r:
         return json.loads(r.read())
 
+def resolve_output_path(path, mode):
+    """Apply duplicate_files logic to *path*.
+
+    mode values (from config/default):
+      'overwrite'  - return path unchanged (default, existing file is replaced)
+      'increment'  - if file exists, append -1, -2, ... before the extension
+                     e.g. nasa-123.png -> nasa-123-1.png -> nasa-123-2.png
+      'epoch'      - if file exists, append the current Unix epoch before the extension
+                     e.g. nasa-123.png -> nasa-123-1779464539.png
+    """
+    import time as _time
+    p = Path(path)
+    if mode == "overwrite" or not p.exists():
+        return path
+    stem = p.stem
+    suffix = p.suffix
+    parent = p.parent
+    if mode == "epoch":
+        new_path = parent / f"{stem}-{int(_time.time())}{suffix}"
+    else:  # increment
+        counter = 1
+        while True:
+            new_path = parent / f"{stem}-{counter}{suffix}"
+            if not new_path.exists():
+                break
+            counter += 1
+    return str(new_path)
+
 def resolve_url(url):
     try:
         req = urllib.request.Request(url, headers={"User-Agent": UA}, method="HEAD")
@@ -1397,6 +1425,11 @@ async def _main():
 
     if args.output_dir and not os.path.isabs(output) and not os.path.dirname(output):
         output = os.path.join(os.path.expanduser(args.output_dir), output)
+
+    # Apply duplicate_files handling (only when output was auto-generated, not explicit)
+    if not args.output:
+        dup_mode = conf.get("duplicate_files", "overwrite").strip().lower()
+        output = resolve_output_path(output, dup_mode)
 
     html = build_html(tweets, light=args.light, no_source=args.no_source, css_path=args.css, width=args.width, nitter=args.nitter,
                       for_browser=bool(args.save_html))
