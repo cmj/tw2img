@@ -254,6 +254,21 @@ tw2img 2054583770045386950 --guest --save-html tweet.html
 tw2img --guest @barackobama --full-stats --save-html /tmp/tweet.html && firefox /tmp/tweet.html
 ```
 
+**Print tweet text:**
+
+```
+$ tw2img --print-line --guest 22
+```
+> @noah (noah glass) just setting up my twttr | ↳ 86 ⇅ 3.9K ‟ 167 ♥ 3.4K | Web Client | https://x.com/i/status/22
+
+
+**Print tweet text and translate output:**
+```bash
+# Requires Translate Shell: https://github.com/soimort/translate-shell
+$ tw2img --print-line --guest 'https://nitter.net/PEKETTER_TECH/status/2059593901607153975' | trans -b
+```
+> @PEKETTER_TECH (YODARE @ PEKETTER TECH) Speaking of the search bug in X (Twitter), I don't know when it started, but the "source:" command has been completely disabled. Moreover, if you specify it, you will get the "current time - 7 days worth of results drop" bug 👇 Search Twitter "lang:ja source:twitter_for_iphone" https://x.com/search?q=lang%3Aja%20source%3Atwitter_for_iphone&f=live | ↳ 0 ⇅ 0 “ 0 ♥ 3 🡕 483 | Web App | https://x.com/i/status/2059593901607153975
+
 ---
 
 ## Articles
