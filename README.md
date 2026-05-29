@@ -66,7 +66,7 @@ Then run:
 tw2img 2054583770045386950
 ```
 
-**Where to find tokens:** Open browser devtools, network tab, any x.com request, select cookies tab — `auth_token` and `ct0`.
+**Where to find tokens:** Open browser devtools, network tab, any x.com request, select cookies tab - `auth_token` and `ct0`.
 
 ---
 
@@ -89,6 +89,7 @@ tw2img 2054583770045386950
 | `--save-html` | Save HTML to this file instead of rendering PNG |
 | `--imgur` | Upload PNG to imgur after rendering |
 | `--dump-json` | Print raw API JSON to stdout and exit |
+| `--trans <[SOURCE:]TARGET>` | Translate tweet text before rendering. Target-only (e.g. `--trans en`) auto-detects source; `SOURCE:TARGET` (e.g. `--trans ja:en`) sets both. Requires `pip install deep-translator` |
 | `--print-line` | Print a one-line text summary of the focal tweet to stdout |
 | `--view` | Automatically open the rendered output file after creation |
 | `--viewer <cmd>` | Specify custom viewer executable/command (e.g., `viewnior`, `firefox`, or `kitty +icat {}`) |
@@ -98,11 +99,11 @@ tw2img 2054583770045386950
 
 ## Config File
 
-Options can be set as persistent defaults in a config file (INI format). Config is loaded in this order — later sources override earlier ones:
+Options can be set as persistent defaults in a config file (INI format). Config is loaded in this order - later sources override earlier ones:
 
-1. `~/.config/tw2img/tw2img.conf` — user default
-2. `<script_dir>/tw2img.conf` — next to the script, if present
-3. `-c /path/to/custom.conf` — explicit override
+1. `~/.config/tw2img/tw2img.conf` - user default
+2. `<script_dir>/tw2img.conf` - next to the script, if present
+3. `-c /path/to/custom.conf` - explicit override
 4. Command options / flags always have highest priority
 
 A default config is included as `tw2img.conf`. To install it:
@@ -262,7 +263,35 @@ $ tw2img --print-line --guest 22
 > @noah (noah glass) just setting up my twttr | ↳ 86 ⇅ 3.9K ‟ 167 ♥ 3.4K | Web Client | https://x.com/i/status/22
 
 
-**Print tweet text and translate output:**
+**Print tweet text and translate with `--trans`:**
+
+```bash
+# Install the translation dependency once
+pip install deep-translator
+
+# Auto-detect source language, translate to English
+tw2img --print-line --guest 'https://x.com/PEKETTER_TECH/status/2059593901607153975' --trans en
+
+# Explicitly set source -> target (Japanese -> English)
+tw2img --print-line --guest 2059593901607153975 --trans ja:en
+
+# Render a translated PNG (auto-detect -> English)
+tw2img 2059593901607153975 --guest --trans en
+
+# Translate to French
+tw2img @NASA --guest --trans fr
+```
+
+> `--trans` translates the tweet text (and any quoted tweet) before rendering to PNG or printing with `--print-line`. Use `SOURCE:TARGET` to specify both languages, or just `TARGET` to let Google Translate auto-detect the source. Language codes follow BCP-47 / ISO 639-1 (e.g. `en`, `ja`, `fr`, `de`, `zh-CN`).
+
+You can also set a default in `tw2img.conf` so every run translates automatically:
+
+```ini
+[tw2img]
+trans = ja:en
+```
+
+**Print tweet text and translate output (legacy, external tool):**
 ```bash
 # Requires Translate Shell: https://github.com/soimort/translate-shell
 $ tw2img --print-line --guest 'https://nitter.net/PEKETTER_TECH/status/2059593901607153975' | trans -b

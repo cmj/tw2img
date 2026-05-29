@@ -66,6 +66,31 @@ def load_config(extra_path=None):
     cfg.read([str(s) for s in sources])
     return dict(cfg["tw2img"]) if "tw2img" in cfg else {}
 
+def translate_text(text, source_lang, target_lang):
+    """Translate *text* from *source_lang* to *target_lang* using deep-translator.
+
+    Lazily imports deep-translator so it is not a hard requirement.
+    Install with: pip install deep-translator
+
+    Returns the translated string, or the original text on any error.
+    source_lang / target_lang use BCP-47 / ISO 639-1 codes (e.g. 'ja', 'en', 'auto').
+    Pass source_lang='auto' to let the library detect the language.
+    """
+    try:
+        from deep_translator import GoogleTranslator
+    except ImportError:
+        sys.exit(
+            "Error: deep-translator is required for translation.\n"
+            "Install it with: pip install deep-translator"
+        )
+    try:
+        translated = GoogleTranslator(source=source_lang, target=target_lang).translate(text)
+        return translated or text
+    except Exception as e:
+        print(f"Warning: translation failed ({e}), using original text.", file=sys.stderr)
+        return text
+
+
 BEARER = "AAAAAAAAAAAAAAAAAAAAANRILgAAAAAAnNwIzUejRCOuH5E6I8xnZz4puTs%3D1Zv7ttfk8LF81IUq16cHjhLTvJu4FA33AGWWjCpTnA"
 UA = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
 
@@ -542,6 +567,7 @@ def _parse_tweet_result(result, user_parser):
         "source":          re.sub(r"(?i)^twitter\s+for\s+|^twitter\s*", "", re.sub(r"<[^>]+>", "", result.get("source", ""))),
         "in_reply_to_id":  leg.get("in_reply_to_status_id_str", ""),
         "in_reply_to_sn":  leg.get("in_reply_to_screen_name", ""),
+        "lang":            leg.get("lang", ""),
         "is_rt":           bool(rt_id),
         "rt_orig_sn":      rt_orig_sn,
         "quoted":          quoted,
@@ -1418,6 +1444,12 @@ async def _main():
                    help="Append imgur URL + delete link to FILE after each upload (e.g. ~/tw2imgur_urls)")
     p.add_argument("--full-stats", action="store_true", default=_b("full_stats"),
                    help="Show full unabbreviated stat numbers (e.g. 12,345 instead of 12.3K)")
+    p.add_argument("--trans",      default=conf.get("trans") or None, metavar="[SOURCE:]TARGET",
+                   help="Translate tweet text before rendering. "
+                        "Format: TARGET (e.g. --trans en) to auto-detect source, or "
+                        "SOURCE:TARGET (e.g. --trans ja:en) to specify both. "
+                        "Uses deep-translator (pip install deep-translator). "
+                        "Examples: --trans en  |  --trans ja:en  |  --trans auto:fr")
     p.add_argument("--auth-token", default=conf.get("auth_token") or os.environ.get("TWITTER_AUTH_TOKEN"), help="or use envar TWITTER_AUTH_TOKEN")
     p.add_argument("--csrf-token", default=conf.get("csrf_token") or os.environ.get("TWITTER_CSRF_TOKEN"), help="or use envar TWITTER_CSRF_TOKEN")
     p.add_argument("--view",   action="store_true", default=_b("view"),
@@ -1514,6 +1546,33 @@ async def _main():
 
     tweet_id = tweets[-1]["id"]
     focal = tweets[-1]
+
+    if args.trans:
+        raw = args.trans.strip()
+        if ":" in raw:
+            src_lang, tgt_lang = raw.split(":", 1)
+        else:
+            src_lang, tgt_lang = "auto", raw
+        for t in tweets:
+            if t.get("__tombstone"):
+                continue
+            # Skip if the tweet is already in the target language.
+            # legacy.lang is a BCP-47 tag (e.g. "en", "ja") from the API.
+            # Compare only the primary subtag so "zh-Hant" won't skip --trans zh.
+            tweet_lang = (t.get("lang") or "").split("-")[0].lower()
+            tgt_primary = tgt_lang.split("-")[0].lower()
+            if tweet_lang and tweet_lang == tgt_primary:
+                continue
+            effective_src = src_lang if src_lang != "auto" else (tweet_lang or "auto")
+            print(f"Translating tweet text ({effective_src} -> {tgt_lang}) ...", file=sys.stderr)
+            if t.get("full_text"):
+                t["full_text"] = translate_text(t["full_text"], effective_src, tgt_lang)
+            qt = t.get("quoted")
+            if qt and not qt.get("__tombstone") and qt.get("full_text"):
+                qt_lang = (qt.get("lang") or "").split("-")[0].lower()
+                if not qt_lang or qt_lang != tgt_primary:
+                    qt_src = src_lang if src_lang != "auto" else (qt_lang or "auto")
+                    qt["full_text"] = translate_text(qt["full_text"], qt_src, tgt_lang)
 
     if args.print_line:
         print(format_tweet_line(focal))
