@@ -104,18 +104,31 @@ TWEET_DETAIL_VARS   = lambda id: {"focalTweetId": id, "with_rux_injections": Tru
     "rankingMode": "Likes", "includePromotedContent": False, "withCommunity": True,
     "withQuickPromoteEligibilityTweetFields": False, "withBirdwatchNotes": True, "withVoice": True}
 TWEET_DETAIL_FEAT   = {"rweb_video_screen_enabled": False, "profile_label_improvements_pcf_label_in_post_enabled": True,
-    "creator_subscriptions_tweet_preview_api_enabled": True, "responsive_web_graphql_timeline_navigation_enabled": True,
-    "responsive_web_graphql_skip_user_profile_image_extensions_enabled": False, "communities_web_enable_tweet_community_results_fetch": True,
-    "c9s_tweet_anatomy_moderator_badge_enabled": True, "articles_preview_enabled": True,
-    "responsive_web_edit_tweet_api_enabled": True, "graphql_is_translatable_rweb_tweet_is_translatable_enabled": True,
+    "responsive_web_profile_redirect_enabled": False, "rweb_tipjar_consumption_enabled": False,
+    "verified_phone_label_enabled": False, "creator_subscriptions_tweet_preview_api_enabled": True,
+    "responsive_web_graphql_timeline_navigation_enabled": True,
+    "responsive_web_graphql_skip_user_profile_image_extensions_enabled": False,
+    "premium_content_api_read_enabled": False, "communities_web_enable_tweet_community_results_fetch": True,
+    "c9s_tweet_anatomy_moderator_badge_enabled": True,
+    "responsive_web_grok_analyze_button_fetch_trends_enabled": False,
+    "responsive_web_grok_analyze_post_followups_enabled": True, "responsive_web_jetfuel_frame": True,
+    "responsive_web_grok_share_attachment_enabled": True, "responsive_web_grok_annotations_enabled": True,
+    "articles_preview_enabled": True, "responsive_web_edit_tweet_api_enabled": True,
+    "graphql_is_translatable_rweb_tweet_is_translatable_enabled": True,
     "view_counts_everywhere_api_enabled": True, "longform_notetweets_consumption_enabled": True,
     "responsive_web_twitter_article_tweet_consumption_enabled": True, "tweet_awards_web_tipping_enabled": False,
-    "freedom_of_speech_not_reach_fetch_enabled": True, "standardized_nudges_misinfo": True,
+    "content_disclosure_indicator_enabled": True, "content_disclosure_ai_generated_indicator_enabled": True,
+    "responsive_web_grok_show_grok_translated_post": True, "responsive_web_grok_analysis_button_from_backend": True,
+    "post_ctas_fetch_enabled": True, "freedom_of_speech_not_reach_fetch_enabled": True,
+    "standardized_nudges_misinfo": True,
     "tweet_with_visibility_results_prefer_gql_limited_actions_policy_enabled": True,
     "longform_notetweets_rich_text_read_enabled": True, "longform_notetweets_inline_media_enabled": False,
-    "responsive_web_enhance_cards_enabled": False, "verified_phone_label_enabled": False}
+    "responsive_web_grok_image_annotation_enabled": True, "responsive_web_grok_imagine_annotation_enabled": True,
+    "responsive_web_grok_community_note_auto_translation_is_enabled": False,
+    "responsive_web_enhance_cards_enabled": False}
 TWEET_DETAIL_FTOG   = {"withArticleRichContentState": True, "withArticlePlainText": False,
-    "withArticleSummaryText": True, "withGrokAnalyze": False}
+    "withArticleSummaryText": True, "withArticleVoiceOver": True, "withGrokAnalyze": False,
+    "withDisallowedReplyControls": False}
 
 TWEET_RESULT_FEAT   = {"creator_subscriptions_tweet_preview_api_enabled": True,
     "communities_web_enable_tweet_community_results_fetch": True,
@@ -532,7 +545,10 @@ def _parse_tweet_result(result, user_parser):
     )
 
     media_attr = None
+    is_ai_media = False
     for media_item in ext_entities.get("media", []):
+        if media_item.get("grok_post_id"):
+            is_ai_media = True
         src_user = (
             media_item.get("additional_media_info", {})
             .get("source_user", {})
@@ -558,6 +574,7 @@ def _parse_tweet_result(result, user_parser):
         "entities":        entities,
         "ext_entities":    ext_entities,
         "media_attribution": media_attr,
+        "is_ai_media":     is_ai_media,
         "created_at":      leg.get("created_at", ""),
         "reply_count":     leg.get("reply_count", 0),
         "retweet_count":   leg.get("retweet_count", 0),
@@ -840,7 +857,7 @@ def _attribution_html(attr):
         f'</div>'
     )
 
-def media_html(ext_entities):
+def media_html(ext_entities, is_ai=False):
     media_list = ext_entities.get("media", [])
     if not media_list:
         return ""
@@ -864,8 +881,15 @@ def media_html(ext_entities):
                 f'</div>'
             )
 
+    ai_label = (
+        '<div class="ai-label" style="font-size:10px;color:var(--grey);margin-top:3px;display:flex;align-items:center;gap:0;">'
+        + icon_svg("robot", 18, "var(--grey)")
+        + 'Made with AI'
+        '</div>'
+    ) if is_ai else ""
+
     if len(parts) == 5:
-        return f'''<div class="media-grid-5">
+        grid = f'''<div class="media-grid-5">
             <div class="row-top">
                 <div class="grid-item">{parts[0]}</div>
                 <div class="grid-item">{parts[1]}</div>
@@ -877,20 +901,22 @@ def media_html(ext_entities):
             </div>
         </div>'''
     elif len(parts) == 4:
-        return f'''<div class="media-grid-2x2">
+        grid = f'''<div class="media-grid-2x2">
             <div class="grid-item">{parts[0]}</div>
             <div class="grid-item">{parts[1]}</div>
             <div class="grid-item">{parts[2]}</div>
             <div class="grid-item">{parts[3]}</div>
         </div>'''
     elif len(parts) == 3:
-        return f'''<div class="media-grid-3">
+        grid = f'''<div class="media-grid-3">
             <div class="grid-item">{parts[0]}</div>
             <div class="grid-item">{parts[1]}</div>
             <div class="grid-item span-2">{parts[2]}</div>
         </div>'''
     else:
-        return f'<div class="media-row">{"".join(parts)}</div>'
+        grid = f'<div class="media-row">{"".join(parts)}</div>'
+
+    return grid + ai_label
 
 GLYPHS = {
     "comment": ("M1000 350q0-97-67-179t-182-130-251-48q-39 0-81 4-110-97-257-135-27-8-63-12-10-1-17 5t-10 16v1q-2 2 0 6t1 6 2 5l4 5t4 5 4 5q4 5 17 19t20 22 17 22 18 28 15 33 15 42q-88 50-138 123t-51 157q0 73 40 139t109 115 163 76 197 28q135 0 251-48t182-130 67-179z", 1000),
@@ -899,6 +925,7 @@ GLYPHS = {
     "heart":   ("M790 644q70-64 70-156t-70-158l-360-330-360 330q-70 66-70 158t70 156q62 58 151 58t153-58l56-52 58 52q62 58 150 58t152-58z", 860),
     "views":   ("M180 516l0-538-180 0 0 538 180 0z m250-138l0-400-180 0 0 400 180 0z m250 344l0-744-180 0 0 744 180 0z", 680),
     "group":   ("M0 106l0 134q0 26 18 32l171 80q-66 39-68 131 0 56 35 103 37 41 90 43 31 0 63-19-49-125 23-237-12-11-25-19l-114-55q-48-23-52-84l0-143-114 0q-25 0-27 34z m193-59l0 168q0 27 22 37l152 70 57 28q-37 23-60 66t-22 94q0 76 46 130t110 54 109-54 45-130q0-105-78-158l61-30 146-70q24-10 24-37l0-168q-2-37-37-41l-541 0q-14 2-24 14t-10 27z m473 330q68 106 22 231 31 19 66 21 49 0 90-43 35-41 35-103 0-82-65-131l168-80q18-10 18-32l0-134q0-32-27-34l-118 0 0 143q0 57-50 84l-110 53q-15 8-29 25z", 1000),
+    "robot":   ("M409.6 758.0 c-26.2 -9.8 -39.2 -37.0 -29.6 -62.4 1.7 -4.5 5.1 -10.6 7.6 -13.6 6.1 -7.3 17.3 -14.6 20.6 -13.4 2.2 0.8 2.3 0.5 0.7 -1.3 -1.7 -1.5 -2.2 -11.8 -2.2 -39.2 l0.0 -36.9 -96.6 -0.5 -96.8 -0.5 -8.3 -3.8 c-11.3 -5.1 -22.9 -17.1 -28.1 -28.7 l-4.3 -9.5 0.3 -186.6 0.5 -186.4 4.8 -8.8 c6.1 -11.0 15.3 -19.3 27.4 -25.1 l9.3 -4.3 210.0 0.0 210.0 0.0 9.3 4.3 c12.1 5.8 21.2 14.1 27.4 25.1 l4.8 8.8 0.5 186.4 0.3 186.6 -4.3 9.5 c-5.1 11.6 -16.8 23.6 -28.1 28.7 l-8.3 3.8 -96.6 0.5 -96.8 0.5 0.0 36.9 c0.0 27.4 -0.5 37.7 -2.0 39.2 -1.8 1.8 -1.7 2.2 0.5 1.3 6.6 -2.3 23.1 13.3 28.2 26.9 6.6 17.8 1.2 41.3 -12.3 52.6 -12.9 10.8 -34.0 15.3 -48.1 10.0z m-69.7 -305.6 c17.1 -5.0 28.6 -17.9 32.4 -35.9 3.8 -18.3 -6.5 -38.2 -24.4 -47.1 -25.9 -12.9 -55.0 0.3 -63.3 28.7 -2.3 7.8 -2.5 11.0 -1.0 18.4 3.7 17.6 14.1 29.6 30.7 35.2 10.6 3.8 14.9 3.8 25.6 0.7z m194.2 0.0 c17.1 -5.0 28.6 -17.9 32.4 -35.9 3.8 -18.3 -6.5 -38.2 -24.4 -47.1 -22.6 -11.3 -47.5 -3.3 -59.8 19.4 -7.0 12.6 -7.0 26.9 0.0 40.3 5.8 11.5 13.9 18.4 26.1 22.6 10.8 3.8 14.9 3.8 25.7 0.7z M124.5 456.7 c-14.4 -4.5 -28.9 -17.3 -35.4 -31.4 -3.5 -7.5 -3.7 -10.0 -3.7 -60.9 l0.0 -53.1 4.3 -9.3 c6.0 -12.8 14.9 -22.1 26.1 -27.6 8.6 -4.0 11.6 -4.5 32.4 -5.1 l22.7 -0.7 0.0 94.8 0.0 94.8 -21.1 -0.2 c-11.8 0.0 -23.1 -0.7 -25.4 -1.3z M679.0 363.4 l0.0 -94.8 22.9 0.7 c18.6 0.5 24.2 1.3 30.5 4.2 11.5 5.1 21.7 15.6 27.2 27.6 l4.8 10.3 0.0 53.1 0.0 53.1 -4.6 9.5 c-6.1 12.5 -19.6 24.7 -31.0 28.4 -6.3 2.0 -14.4 2.8 -29.2 2.8 l-20.6 0.0 0.0 -94.8z", 1000),
 }
 
 def icon_svg(name, size=13, color="currentColor"):
@@ -1150,7 +1177,8 @@ def tweet_row_html(t, is_parent=False, no_source=False):
 
     tweet_text  = linkify(clean_text, t["entities"])
     attr_block  = _attribution_html(t.get("media_attribution"))
-    media_block = (attr_block + media_html(t["ext_entities"])) if attr_block else media_html(t["ext_entities"])
+    is_ai       = t.get("is_ai_media", False)
+    media_block = (attr_block + media_html(t["ext_entities"], is_ai=is_ai)) if attr_block else media_html(t["ext_entities"], is_ai=is_ai)
     time_str    = rel_time(t["created_at"])
     row_class   = "tweet-row" + ("" if is_parent else " focal")
 
