@@ -1399,6 +1399,7 @@ html, body {{
     width: {width}px;
     max-width: 100%;
     flex-shrink: 0;
+    box-shadow: 0 4px 32px rgba(0,0,0,0.45);
 }}
 """
         extra_style = centering_css
