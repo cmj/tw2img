@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-article2img.py - render an X/Twitter Article as HTML or IMG using Playwright
+article2img.py - render an X/Twitter Article as HTML Markdown or IMG using Playwright
 
 Requires:
     pip install playwright && playwright install chromium
@@ -13,50 +13,16 @@ Usage:
     # https://x.com/_/article/2054607629738037736 
     article2img.py --guest https://x.com/ARCRaidersGame/article/2054607629738037736
 
+    # Print article as Markdown to stdout (pipe through mdcat for rich terminal rendering)
+    article2img.py --guest --md https://x.com/ARCRaidersGame/article/2054607629738037736
+    article2img.py -q --guest --md - https://x.com/ARCRaidersGame/article/2054607629738037736 | mdcat
+
+    # Save Markdown to a file
+    article2img.py --guest --markdown out.md https://x.com/ARCRaidersGame/article/2054607629738037736
+
     # BEST METHOD: Save as HTML and open (uses article_viewer from conf, or xdg-open)
     # Use the tweet url that contains the article link (or simply just the id)
-    article2img.py --guest --save-html out.html --view https://x.com/ARCRaidersGame/status/2054607629738037736
-
-    # /i/article/ entity URL (requires auth, resolved via ArticleRedirectScreenQuery)
-    article2img.py http://x.com/i/article/2017291991210668034
-
-    # Article URL (author-scoped)
-    article2img.py https://x.com/ARCRaidersGame/article/2054607629738037736
-
-    # Tweet ID that links to an article (requires auth)
-    article2img.py 2054607629738037736
-
-    # Load from cached API JSON
-    article2img.py article.json
-
-    # Save as HTML (no viewer opened unless --view is also passed)
-    article2img.py <url> --save-html article.html
-
-    # Save as HTML and open with a specific viewer
-    article2img.py <url> --save-html article.html --view --viewer firefox
-
-    # Save PNG and open (uses article_viewer from conf, or xdg-open)
-    article2img.py <url> output.png --view
-
-    # Save PNG and open with a specific viewer
-    article2img.py <url> output.png --view --viewer viewnior
-    article2img.py <url> output.png --view --viewer kitty        # uses: kitty +icat
-    article2img.py <url> output.png --view --viewer 'feh --auto-zoom'
-
-Environment variables (same as tw2img.py):
-    export TWITTER_AUTH_TOKEN=<auth_token>
-    export TWITTER_CSRF_TOKEN=<x_csrf_token>
-
-Config file (INI format, [tw2img] section):
-    auth_token = ...
-    csrf_token = ...
-    light = false
-    width = 680
-
-    # Viewer to open images/HTML with after saving (only used when --view is passed).
-    # For PNG:  viewnior | eog | feh | 'feh --auto-zoom' | kitty (kitty +icat)
-    # For HTML: firefox | chromium | xdg-open
-    article_viewer = viewnior
+    article2img.py --guest --view-html https://x.com/ARCRaidersGame/status/2054607629738037736
 """
 
 import sys, json, re, os, argparse, asyncio, urllib.request, urllib.parse, configparser
@@ -337,7 +303,7 @@ def fetch_tweets_batch(tweet_ids, auth_token, csrf_token):
         with urllib.request.urlopen(req) as r:
             data = json.loads(r.read())
     except Exception as e:
-        print(f"[!] TweetResultsByRestIds failed: {e}")
+        print(f"[!] TweetResultsByRestIds failed: {e}", file=sys.stderr)
         return {}
 
     results = {}
@@ -357,7 +323,7 @@ def fetch_tweets_guest(tweet_ids, guest_token):
     """
     results = {}
     for tweet_id in tweet_ids:
-        print(f"  [*] Fetching embedded tweet {tweet_id} (guest)")
+        print(f"  [*] Fetching embedded tweet {tweet_id} (guest)", file=sys.stderr)
         params = {
             "variables":    json.dumps({**TWEET_RESULT_VARS, "tweetId": tweet_id}),
             "features":     json.dumps(TWEET_RESULT_FEAT),
@@ -369,14 +335,14 @@ def fetch_tweets_guest(tweet_ids, guest_token):
             with urllib.request.urlopen(req) as r:
                 data = json.loads(r.read())
         except Exception as e:
-            print(f"  [!] Could not fetch tweet {tweet_id}: {e}")
+            print(f"  [!] Could not fetch tweet {tweet_id}: {e}", file=sys.stderr)
             continue
         res = data.get("data", {}).get("tweetResult", {}).get("result", {})
         tid, parsed = _parse_tweet_result(res)
         if tid and parsed:
             results[tid] = parsed
         else:
-            print(f"  [!] Empty result for tweet {tweet_id}")
+            print(f"  [!] Empty result for tweet {tweet_id}", file=sys.stderr)
     return results
 
 def fetch_article_redirect(article_entity_id, auth_token, csrf_token):
@@ -656,6 +622,275 @@ def content_state_to_html(content_state, media_map, tweet_cache=None):
         i += 1
 
     return "\n".join(html_parts)
+
+
+# ---------------------------------------------------------------------------
+# Markdown output (for terminal rendering via mdcat etc.)
+# ---------------------------------------------------------------------------
+
+# Minimum pixel area to count as a "real" image (not an icon/avatar).
+_MD_MIN_IMAGE_AREA = 400 * 200   # ~80 000 px² — icons are typically <48×48
+
+def _img_is_large(url):
+    """Heuristically decide whether an image URL looks like a large content image.
+
+    Rules (all cheap, no HTTP request needed):
+    - Twitter media CDN images (pbs.twimg.com / ton.twimg.com) are always large.
+    - URLs containing common icon/avatar signals are skipped.
+    """
+    if not url:
+        return False
+    u = url.lower()
+    # Twitter's media CDN — article body images land here
+    if "pbs.twimg.com/media/" in u or "ton.twimg.com" in u:
+        return True
+    # profile_image or avatar signals → icon
+    if any(sig in u for sig in ("profile_image", "_normal", "_bigger", "_mini",
+                                 "avatar", "favicon", "icon")):
+        return False
+    # generic image extensions with no size hint → include
+    if re.search(r"\.(jpe?g|png|webp|gif)(\?|$)", u):
+        return True
+    return False
+
+
+def _md_inline_styles(text, inline_style_ranges):
+    """Apply Bold/Italic/CODE inline styles to plain text for Markdown."""
+    if not text or not inline_style_ranges:
+        return text
+    n = len(text)
+    # Collect open/close markers per character position
+    opens  = [[] for _ in range(n)]
+    closes = [[] for _ in range(n)]
+    TAG_MAP = {
+        "Bold":      ("**", "**"),
+        "Italic":    ("_",  "_"),
+        "Underline": ("",   ""),   # no MD underline — skip
+        "CODE":      ("`",  "`"),
+    }
+    for r in sorted(inline_style_ranges, key=lambda x: x["offset"]):
+        style = r.get("style", "")
+        s, e  = r["offset"], r["offset"] + r["length"]
+        if style in TAG_MAP:
+            o, c = TAG_MAP[style]
+            if o and 0 <= s < n:  opens[s].append(o)
+            if c and 0 < e <= n:  closes[min(e, n) - 1].append(c)
+    parts = []
+    for i, ch in enumerate(text):
+        parts.extend(opens[i])
+        parts.append(ch)
+        parts.extend(reversed(closes[i]))
+    return "".join(parts)
+
+
+def _block_to_md(block, entity_map, media_map, tweet_cache=None, images=False):
+    btype = block.get("type", "unstyled")
+    text  = block.get("text", "")
+    isr   = block.get("inlineStyleRanges", [])
+    er    = block.get("entityRanges", [])
+
+    if btype == "atomic":
+        for eref in er:
+            key   = str(eref.get("key", ""))
+            ent   = entity_map.get(key, {})
+            etype = ent.get("type", "")
+            data  = ent.get("data", {})
+
+            if etype == "IMAGE":
+                src     = data.get("src", "")
+                caption = data.get("caption", "")
+                if src and _img_is_large(src):
+                    if not images:
+                        return ""
+                    alt = caption or ""
+                    md  = f"![{alt}]({src})"
+                    return f"\n{md}\n_{caption}_\n" if caption else f"\n{md}\n"
+                return ""
+
+            if etype == "MEDIA":
+                caption     = data.get("caption", "")
+                media_items = data.get("mediaItems", [])
+                for mi in media_items:
+                    mid = str(mi.get("mediaId", ""))
+                    src = media_map.get(mid, "")
+                    if src and _img_is_large(src):
+                        if not images:
+                            return ""
+                        alt = caption or ""
+                        md  = f"![{alt}]({src})"
+                        return f"\n{md}\n_{caption}_\n" if caption else f"\n{md}\n"
+                mk  = str(data.get("media_key", "") or data.get("id", ""))
+                src = media_map.get(mk, data.get("src", ""))
+                if src and _img_is_large(src):
+                    if not images:
+                        return ""
+                    alt = caption or ""
+                    md  = f"![{alt}]({src})"
+                    return f"\n{md}\n_{caption}_\n" if caption else f"\n{md}\n"
+                return ""
+
+            if etype == "TWEET":
+                tid        = str(data.get("tweetId", ""))
+                tweet_data = (tweet_cache or {}).get(tid)
+                return _tweet_to_md(tid, tweet_data, images=images)
+
+            if etype == "LINK":
+                href = data.get("url", "#")
+                return f"\n{href}\n"
+        return ""
+
+    # Heading levels
+    if btype == "header-one":   prefix = "# "
+    elif btype == "header-two": prefix = "## "
+    elif btype == "header-three": prefix = "### "
+    elif btype == "blockquote": prefix = "> "
+    elif btype == "code-block": return f"\n```\n{text}\n```\n"
+    elif btype in ("unordered-list-item", "ordered-list-item"):
+        prefix = ""   # handled by caller
+    elif btype == "unstyled":   prefix = ""
+    else:                       prefix = ""
+
+    inner = _md_inline_styles(text, isr)
+
+    # linkify LINK entities
+    for eref in sorted(er, key=lambda x: x["offset"], reverse=True):
+        key  = str(eref.get("key", ""))
+        ent  = entity_map.get(key, {})
+        if ent.get("type") == "LINK":
+            s    = eref["offset"]
+            ln   = eref["length"]
+            href = ent.get("data", {}).get("url", "#")
+            inner = inner[:s] + f"[{inner[s:s+ln]}]({href})" + inner[s+ln:]
+
+    if not inner.strip():
+        return ""
+
+    return f"{prefix}{inner}"
+
+
+def _tweet_to_md(tweet_id, tweet_data, images=False):
+    """Render an embedded tweet as a Markdown block-quote."""
+    url = f"https://x.com/i/status/{tweet_id}"
+    if not tweet_data:
+        return f"\n> _(Embedded tweet — [view on X]({url}))_\n"
+
+    sn   = tweet_data.get("screen_name", "")
+    name = tweet_data.get("name", "")
+    text = tweet_data.get("text", "")
+    text = re.sub(r"\s*https://t\.co/\S+$", "", text).strip()
+    # indent each line so it stays inside the blockquote
+    body = "\n".join(f"> {line}" for line in text.splitlines()) if text else ""
+    header = f"> **{name}** (@{sn})  \n"
+    footer = f"\n> — [View tweet]({url})"
+    # include large media images (only when --images is on)
+    media_lines = []
+    if images:
+        for m in tweet_data.get("media", []):
+            if m.get("type") == "photo" and _img_is_large(m.get("url", "")):
+                media_lines.append(f"> ![]({m['url']})")
+    media_block = "\n" + "\n".join(media_lines) if media_lines else ""
+    return f"\n{header}{body}{media_block}{footer}\n"
+
+
+def content_state_to_markdown(content_state, media_map, tweet_cache=None, images=False):
+    blocks     = content_state.get("blocks", [])
+    entity_map = content_state.get("entityMap", {})
+
+    if isinstance(entity_map, list):
+        if entity_map and isinstance(entity_map[0], dict) and "key" in entity_map[0] and "value" in entity_map[0]:
+            entity_map = {str(e["key"]): e["value"] for e in entity_map}
+        else:
+            entity_map = {str(i): e for i, e in enumerate(entity_map)}
+
+    md_parts = []
+    i = 0
+    while i < len(blocks):
+        block = blocks[i]
+        btype = block.get("type", "unstyled")
+
+        # Collect contiguous list items together
+        if btype in ("unordered-list-item", "ordered-list-item"):
+            bullet = "-" if btype == "unordered-list-item" else None
+            count  = 1
+            items  = []
+            while i < len(blocks) and blocks[i].get("type") == btype:
+                item_text = _block_to_md(blocks[i], entity_map, media_map, tweet_cache, images=images)
+                prefix = f"{count}." if bullet is None else "-"
+                items.append(f"{prefix} {item_text}")
+                count += 1
+                i += 1
+            md_parts.append("\n".join(items))
+            continue
+
+        frag = _block_to_md(block, entity_map, media_map, tweet_cache, images=images)
+        if frag is not None:
+            md_parts.append(frag)
+        i += 1
+
+    return "\n\n".join(p for p in md_parts if p.strip())
+
+
+def build_article_markdown(article, tweet_cache=None, images=False, tweet_id=None):
+    """Return the article as a Markdown string suitable for mdcat / terminal rendering."""
+    author  = article["author"]
+    title   = article["title"]
+    summary = article.get("summary", "")
+    stats   = article.get("stats", {})
+
+    sn          = author.get("screen_name", "")
+    name        = author.get("name", "")
+    followers   = fmt(author.get("followers", 0))
+    date_str    = abs_time(stats.get("created_at", ""))
+    if tweet_id:
+        article_url = f"https://x.com/{sn}/status/{tweet_id}"
+    else:
+        article_url = f"https://x.com/{sn}/article"
+
+    body = content_state_to_markdown(
+        article["content_state"], article["media_map"],
+        tweet_cache=tweet_cache, images=images,
+    )
+
+    lines = []
+    lines.append(f"# {title}\n")
+
+    # Cover image (only when --images is set)
+    if images:
+        cover_url = article.get("cover_url", "")
+        if not cover_url:
+            m = re.search(r"!\[[^\]]*\]\(([^)]+)\)", body)
+            if m:
+                cover_url = m.group(1)
+        if cover_url:
+            lines.append(f"![]({cover_url})\n")
+
+    if images and author.get("avatar_url"):
+        # Use the _normal (48x48) variant so it renders at a sensible size
+        avatar = author["avatar_url"].replace("_bigger", "_normal")
+        lines.append(f"![]({avatar})")
+    lines.append(f"**[{name}](https://x.com/{sn})** (@{sn})  ")
+    lines.append(f"_{followers} followers · {date_str}_\n")
+
+    if summary:
+        # Each summary line quoted individually; bullet lines get an extra space
+        # so they don't become "> - item" (renders as blockquote+list in some tools).
+        summary_lines = summary.strip().splitlines()
+        quoted = "\n".join(
+            f">  {l}" if l.startswith("- ") else f"> {l}"
+            for l in summary_lines
+        )
+        lines.append(quoted + "\n")
+
+    lines.append("---\n")
+    lines.append(body)
+    lines.append("\n---")
+    likes    = fmt(stats.get("like_count", 0))
+    retweets = fmt(stats.get("retweet_count", 0))
+    replies  = fmt(stats.get("reply_count", 0))
+    views    = fmt(stats.get("view_count", 0))
+    lines.append(f"💬 {replies}  🔁 {retweets}  ❤️ {likes}  👁 {views}  · [View on X]({article_url})")
+
+    return "\n".join(lines)
 
 
 # "bookmark": ("M160 0 L160 900 L500 650 L840 900 L840 0 Z", 1000),
@@ -1156,6 +1391,14 @@ async def render_png(html, output_path, width=680, retina=True):
         await wrapper.screenshot(path=output_path)
         await browser.close()
 
+_quiet = False
+
+def log(*args, **kwargs):
+    """Print progress messages to stderr so they never pollute stdout pipelines."""
+    if not _quiet:
+        print(*args, **kwargs, file=sys.stderr)
+
+
 async def _main():
     conf = load_config()
 
@@ -1181,6 +1424,16 @@ async def _main():
                         "Omit FILE to auto-name as <user>-article-<id>.html in the same directory as the PNG output.")
     p.add_argument("--view-html",  action="store_true", default=False,
                    help="Shorthand for --save-html --view: auto-save HTML and open it immediately.")
+    p.add_argument("--markdown", "--md",
+                   nargs="?", const="-", default=None, metavar="FILE",
+                   help="Output article as Markdown instead of rendering PNG. "
+                        "Pass a filename to write to disk, or omit (or use '-') to print to stdout. "
+                        "Designed for terminal rendering via mdcat.")
+    p.add_argument("--images", action="store_true",
+                   help="Include images in Markdown output (cover + inline). "
+                        "Requires a terminal/renderer that supports inline images (e.g. mdcat in kitty).")
+    p.add_argument("-q", "--quiet", action="store_true",
+                   help="Suppress all progress messages (stderr).")
     p.add_argument("--dump-json",  action="store_true")
     p.add_argument("--guest",      action="store_true",
                    help="Use guest-token auth (no auth required). "
@@ -1196,12 +1449,16 @@ async def _main():
                    help="Open the saved file after saving. Uses --viewer if given, "
                         "then 'article_viewer' from tw2img.conf, then xdg-open.")
     p.add_argument("--viewer",
-                   default=conf.get("article_viewer", ""),
+                   default=conf.get("article_viewer", "xdg-open"),
                    metavar="VIEWER",
                    help="Override the viewer used by --view. "
                         "Examples: viewnior, kitty (uses 'kitty +icat'), firefox. "
-                        "Can also be set permanently with 'article_viewer = ...' in tw2img.conf.")
+                        "Can also be set permanently with 'article_viewer = ...' in tw2img.conf. "
+                        "Defaults to xdg-open.")
     args = p.parse_args()
+
+    global _quiet
+    _quiet = args.quiet
 
     # --view-html is shorthand for --save-html (auto-named) + --view
     if args.view_html:
@@ -1226,13 +1483,13 @@ async def _main():
             if not args.auth_token or not args.csrf_token:
                 sys.exit("Error: /i/article/ URLs require authentication.\n"
                          "Supply --auth-token / --csrf-token (or set in tw2img.conf / env vars).")
-            print(f"[*] Resolving /i/article/{article_entity_id} via ArticleRedirectScreenQuery")
+            log(f"[*] Resolving /i/article/{article_entity_id} via ArticleRedirectScreenQuery")
             try:
                 tweet_id, screen_name = fetch_article_redirect(
                     article_entity_id, args.auth_token, args.csrf_token)
             except Exception as e:
                 sys.exit(f"[!] ArticleRedirectScreenQuery failed: {e}")
-            print(f"[*] Resolved to tweet {tweet_id} (@{screen_name})")
+            log(f"[*] Resolved to tweet {tweet_id} (@{screen_name})")
         else:
             m = re.search(r"/article/(\d+)", inp)
             if m:               tweet_id = m.group(1)
@@ -1243,12 +1500,12 @@ async def _main():
                 else:           sys.exit(f"Cannot parse tweet/article ID from: {inp!r}")
 
         if args.guest:
-            print("[*] Requesting guest token")
+            log("[*] Requesting guest token")
             try:
                 guest_token = get_guest_token()
             except Exception as e:
                 sys.exit(f"[!] Failed to obtain guest token: {e}")
-            print(f"[*] Got guest token: {guest_token} - fetching tweet {tweet_id}")
+            log(f"[*] Got guest token: {guest_token} - fetching tweet {tweet_id}")
             api_data = fetch_tweet_api(tweet_id, guest_token=guest_token)
 
             # Check immediately whether the article body came back
@@ -1259,19 +1516,19 @@ async def _main():
                           .get("article_results", {})
                           .get("result", {}))
             if not ar:
-                print("[!] Guest mode: API returned no article content.\n"
+                log("[!] Guest mode: API returned no article content.\n"
                       "  Articles are gated behind authentication: re-run without --guest\n"
                       "  and supply --auth-token / --csrf-token (or set in config) to access the full content.")
                 if args.dump_json:
                     print(json.dumps(api_data, indent=2))
                 sys.exit(1)
-            print("[*] Guest mode returned article content")
+            log("[*] Guest mode returned article content")
         else:
             if not args.auth_token or not args.csrf_token:
                 sys.exit("Error: --auth-token and --csrf-token required (or TWITTER_AUTH_TOKEN /\n"
                          "TWITTER_CSRF_TOKEN env vars, or ~/.config/tw2img/tw2img.conf).\n"
                          "To attempt unauthenticated access, pass --guest")
-            print(f"[*] Fetching tweet {tweet_id}")
+            log(f"[*] Fetching tweet {tweet_id}")
             api_data = fetch_tweet_api(tweet_id, args.auth_token, args.csrf_token)
 
     if args.dump_json:
@@ -1295,16 +1552,27 @@ async def _main():
     tweet_cache = {}
     tweet_ids   = article.get("tweet_ids", [])
     if tweet_ids:
-        print(f"[*] Fetching {len(tweet_ids)} embedded tweet(s): {', '.join(tweet_ids)}")
+        log(f"[*] Fetching {len(tweet_ids)} embedded tweet(s): {', '.join(tweet_ids)}")
         try:
             if args.guest:
                 tweet_cache = fetch_tweets_guest(tweet_ids, guest_token)
             else:
                 tweet_cache = fetch_tweets_batch(
                     tweet_ids, args.auth_token, args.csrf_token)
-            print(f"[*] Retrieved {len(tweet_cache)}/{len(tweet_ids)} embedded tweet(s)")
+            log(f"[*] Retrieved {len(tweet_cache)}/{len(tweet_ids)} embedded tweet(s)")
         except Exception as e:
-            print(f"[!] Could not fetch embedded tweets: {e}")
+            log(f"[!] Could not fetch embedded tweets: {e}")
+
+    if args.markdown is not None:
+        tid = api_data["data"]["tweetResult"]["result"].get("rest_id")
+        md = build_article_markdown(article, tweet_cache=tweet_cache, images=args.images, tweet_id=tid)
+        if args.markdown in ("-", ""):
+            print(md)
+        else:
+            with open(args.markdown, "w", encoding="utf-8") as f:
+                f.write(md)
+            print(f"Markdown saved to {args.markdown}")
+        return
 
     sn     = article["author"]["screen_name"]
     tid    = api_data["data"]["tweetResult"]["result"].get("rest_id", "article")
@@ -1333,7 +1601,7 @@ async def _main():
             f.write(html)
         print(f"HTML saved to {html_path}")
         if args.view:
-            open_with_viewer(html_path, args.viewer or "xdg-open")
+            open_with_viewer(html_path, args.viewer)
         return
 
     html = build_article_html(
@@ -1343,11 +1611,11 @@ async def _main():
         print(html)
         return
 
-    print(f"Rendering {output}")
+    log(f"Rendering {output}")
     await render_png(html, output, width=args.width, retina=not args.no_retina)
-    print(f"{output} saved")
+    log(f"{output} saved")
     if args.view:
-        open_with_viewer(output, args.viewer or "xdg-open")
+        open_with_viewer(output, args.viewer)
 
 
 def main():

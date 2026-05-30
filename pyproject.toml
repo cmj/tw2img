@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "tw2img"
-version = "0.1.5"
+version = "0.1.7"
 description = "Render tweets as PNG/JPG images using Playwright"
 readme = "README.md"
 license = { text = "MIT" }
