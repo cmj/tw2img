@@ -1399,6 +1399,7 @@ html, body {{
     width: {width}px;
     max-width: 100%;
     flex-shrink: 0;
+    border-radius: 12px;
     box-shadow: 0 4px 32px rgba(0,0,0,0.45);
 }}
 """
@@ -1476,7 +1477,12 @@ async def _main():
     p.add_argument("--css",        default=conf.get("css") or None, help="File to override the theme (ex: nitter/public/css/themes/pleroma.css)")
     p.add_argument("--nitter",     action="store_true", default=_b("nitter"), help="Use Nitter default theme")
     p.add_argument("--html-only",  action="store_true", default=_b("html_only"), help="Print HTML to stdout instead of rendering PNG")
-    p.add_argument("--save-html",  default=conf.get("save_html") or None, help="Save HTML to this file instead of rendering PNG")
+    p.add_argument("--save-html",  nargs="?", const="", default=conf.get("save_html") or None,
+                   metavar="FILE",
+                   help="Save HTML instead of rendering PNG. "
+                        "Omit FILE to auto-name as <user>-<id>.html in the same directory as the PNG output.")
+    p.add_argument("--view-html",  action="store_true", default=_b("view_html"),
+                   help="Shorthand for --save-html --view: auto-save HTML and open it immediately.")
     p.add_argument("--output-dir", default=conf.get("output_dir") or None, metavar="DIR",
                    help="Directory to save output PNG (default: current working directory)")
     p.add_argument("--imgur",      action="store_true", default=_b("imgur"), help="Upload PNG to imgur after rendering")
@@ -1503,6 +1509,12 @@ async def _main():
                         "If omitted the filename is appended automatically. "
                         "Examples: viewnior  |  eog  |  'kitty +icat {}'  |  firefox")
     args = p.parse_args()
+
+    # --view-html is shorthand for --save-html (auto-named) + --view
+    if args.view_html:
+        if args.save_html is None:
+            args.save_html = ""
+        args.view = True
 
     # Apply full-stats flag globally so fmt() picks it up
     global _FULL_STATS
@@ -1644,15 +1656,22 @@ async def _main():
         output = resolve_output_path(output, dup_mode)
 
     html = build_html(tweets, light=args.light, no_source=args.no_source, css_path=args.css, width=args.width, nitter=args.nitter,
-                      for_browser=bool(args.save_html))
+                      for_browser=(args.save_html is not None))
 
-    if args.save_html:
-        with open(args.save_html, 'w', encoding='utf-8') as f:
+    if args.save_html is not None:
+        if args.save_html == "":
+            # Auto-name: same base as the PNG output but with .html extension.
+            # duplicate_files handling (increment/epoch) was already applied to
+            # `output` above, so we inherit that suffix here.
+            html_path = str(Path(output).with_suffix(".html"))
+        else:
+            html_path = args.save_html
+        with open(html_path, 'w', encoding='utf-8') as f:
             f.write(html)
-        print(f"HTML saved to {args.save_html}")
+        print(f"HTML saved to {html_path}")
         if args.view:
             viewer = args.viewer or "firefox"
-            open_with_viewer(args.save_html, viewer)
+            open_with_viewer(html_path, viewer)
         return
 
     if args.html_only:

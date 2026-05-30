@@ -1174,7 +1174,13 @@ async def _main():
     p.add_argument("--width",      type=int, default=int(conf.get("width", 680)))
     p.add_argument("--no-retina",  action="store_true", help="Generate 50%% smaller image")
     p.add_argument("--html-only",  action="store_true", help="Print HTML to stdout and exit")
-    p.add_argument("--save-html",  default=None, metavar="FILE")
+    p.add_argument("--output-dir", default=conf.get("output_dir") or None, metavar="DIR",
+                   help="Directory to save output file (default: current working directory)")
+    p.add_argument("--save-html",  nargs="?", const="", default=None, metavar="FILE",
+                   help="Save HTML instead of rendering PNG. "
+                        "Omit FILE to auto-name as <user>-article-<id>.html in the same directory as the PNG output.")
+    p.add_argument("--view-html",  action="store_true", default=False,
+                   help="Shorthand for --save-html --view: auto-save HTML and open it immediately.")
     p.add_argument("--dump-json",  action="store_true")
     p.add_argument("--guest",      action="store_true",
                    help="Use guest-token auth (no auth required). "
@@ -1196,6 +1202,12 @@ async def _main():
                         "Examples: viewnior, kitty (uses 'kitty +icat'), firefox. "
                         "Can also be set permanently with 'article_viewer = ...' in tw2img.conf.")
     args = p.parse_args()
+
+    # --view-html is shorthand for --save-html (auto-named) + --view
+    if args.view_html:
+        if args.save_html is None:
+            args.save_html = ""
+        args.view = True
 
     if not args.input:
         p.print_help()
@@ -1298,20 +1310,30 @@ async def _main():
     tid    = api_data["data"]["tweetResult"]["result"].get("rest_id", "article")
     output = args.output or f"{sn}-article-{tid}.png"
 
+    if args.output_dir and not os.path.isabs(output) and not os.path.dirname(output):
+        output = os.path.join(os.path.expanduser(args.output_dir), output)
+
     # Apply duplicate_files handling (only when output was auto-generated, not explicit)
     if not args.output:
         dup_mode = conf.get("duplicate_files", "overwrite").strip().lower()
         output = resolve_output_path(output, dup_mode)
 
-    if args.save_html:
+    if args.save_html is not None:
+        if args.save_html == "":
+            # Auto-name: same base as the PNG output but with .html extension.
+            # duplicate_files handling (increment/epoch) was already applied to
+            # `output` above, so we inherit that suffix here.
+            html_path = str(Path(output).with_suffix(".html"))
+        else:
+            html_path = args.save_html
         html = build_article_html(
             article, light=args.light, width=args.width,
             standalone=True, tweet_cache=tweet_cache)
-        with open(args.save_html, "w", encoding="utf-8") as f:
+        with open(html_path, "w", encoding="utf-8") as f:
             f.write(html)
-        print(f"HTML saved to {args.save_html}")
+        print(f"HTML saved to {html_path}")
         if args.view:
-            open_with_viewer(args.save_html, args.viewer or "xdg-open")
+            open_with_viewer(html_path, args.viewer or "xdg-open")
         return
 
     html = build_article_html(

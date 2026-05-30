@@ -86,7 +86,8 @@ tw2img 2054583770045386950
 | `--css theme.css` | File to override the theme (ex: nitter/public/css/themes/pleroma.css) |
 | `--nitter` | Use Nitter default theme |
 | `--html-only` | Print HTML to stdout instead of rendering PNG |
-| `--save-html` | Save HTML to this file instead of rendering PNG |
+| `--save-html [FILE]` | Save HTML instead of rendering PNG. Omit `FILE` to auto-name as `<user>-<id>.html` alongside the PNG |
+| `--view-html` | Shorthand for `--save-html` + `--view`: auto-save HTML and open it immediately |
 | `--imgur` | Upload PNG to imgur after rendering |
 | `--dump-json` | Print raw API JSON to stdout and exit |
 | `--trans <[SOURCE:]TARGET>` | Translate tweet text before rendering. Target-only (e.g. `--trans en`) auto-detects source; `SOURCE:TARGET` (e.g. `--trans ja:en`) sets both. Requires `pip install deep-translator` |
@@ -180,6 +181,9 @@ tw2img @NASA --guest --view --viewer "kitty +icat {}"
 # View directly in Firefox (ideal when combined with --save-html)
 tw2img 2054583770045386950 --save-html tweet.html --view --viewer firefox
 
+# Shorthand: auto-save HTML and open immediately (uses viewer from config, default firefox)
+tw2img 2054583770045386950 --view-html
+
 # Print a one-line text summary of the focal tweet to stdout
 tw2img 21 --print-line --guest
 @biz (Biz Stone) ✔ just setting up my twttr | ↳ 153 ⇅ 4.8K ‟ 302 ♥ 4.3K | Web Client | https://x.com/i/status/21
@@ -243,16 +247,17 @@ tw2img 2054583770045386950 --guest --full-stats
 tw2img 2054583770045386950 --guest --html-only
 ```
 
-**Save HTML to a file:**
+
+**Save HTML and open immediately:**
 
 ```bash
-tw2img 2054583770045386950 --guest --save-html tweet.html
+tw2img 2054583770045386950 --guest --view-html
 ```
 
-**Save HTML to a file and load in Firefox:**
+**Save HTML to a specific file and open in Firefox:**
 
 ```bash
-tw2img --guest @barackobama --full-stats --save-html /tmp/tweet.html && firefox /tmp/tweet.html
+tw2img 2054583770045386950 --guest --save-html tweet.html --view --viewer firefox
 ```
 
 **Print tweet text:**
@@ -263,53 +268,40 @@ $ tw2img --print-line --guest 22
 > @noah (noah glass) just setting up my twttr | ↳ 86 ⇅ 3.9K ‟ 167 ♥ 3.4K | Web Client | https://x.com/i/status/22
 
 
-**Print tweet text and translate with `--trans`:**
+**Translate tweet before rendering:**
 
 ```bash
 # Install the translation dependency once
 pip install deep-translator
 
-# Auto-detect source language, translate to English
-tw2img --print-line --guest 'https://x.com/PEKETTER_TECH/status/2059593901607153975' --trans en
-
-# Explicitly set source -> target (Japanese -> English)
-tw2img --print-line --guest 2059593901607153975 --trans ja:en
-
-# Render a translated PNG (auto-detect -> English)
+# Auto-detect source, translate to English
 tw2img 2059593901607153975 --guest --trans en
 
-# Translate to French
-tw2img @NASA --guest --trans fr
+# Explicitly set source -> target (Japanese -> English)
+tw2img 2059593901607153975 --guest --trans ja:en
 ```
 
-> `--trans` translates the tweet text (and any quoted tweet) before rendering to PNG or printing with `--print-line`. Use `SOURCE:TARGET` to specify both languages, or just `TARGET` to let Google Translate auto-detect the source. Language codes follow BCP-47 / ISO 639-1 (e.g. `en`, `ja`, `fr`, `de`, `zh-CN`).
-
-You can also set a default in `tw2img.conf` so every run translates automatically:
+> `--trans` translates the tweet text (and any quoted tweet) before rendering. Use `SOURCE:TARGET` to specify both languages, or just `TARGET` to auto-detect. Language codes follow BCP-47 / ISO 639-1 (`en`, `ja`, `fr`, `zh-CN`, etc). Can also be set as a default in `tw2img.conf`:
 
 ```ini
 [tw2img]
-trans = ja:en
+# translate everything not lang:en to english
+trans = en
 ```
-
-**Print tweet text and translate output (legacy, external tool):**
-```bash
-# Requires Translate Shell: https://github.com/soimort/translate-shell
-$ tw2img --print-line --guest 'https://nitter.net/PEKETTER_TECH/status/2059593901607153975' | trans -b
-```
-> @PEKETTER_TECH (YODARE @ PEKETTER TECH) Speaking of the search bug in X (Twitter), I don't know when it started, but the "source:" command has been completely disabled. Moreover, if you specify it, you will get the "current time - 7 days worth of results drop" bug 👇 Search Twitter "lang:ja source:twitter_for_iphone" https://x.com/search?q=lang%3Aja%20source%3Atwitter_for_iphone&f=live | ↳ 0 ⇅ 0 “ 0 ♥ 3 🡕 483 | Web App | https://x.com/i/status/2059593901607153975
 
 ---
 
 ## Articles
 
-**Save article and auto-load rendered HTML in Firefox:**
+Articles are long-form content that don't render well as a PNG. The recommended approach is to save as HTML and open in a browser via `--view-html`:
 
 ```bash
-# BEST METHOD: Save as HTML and open (uses article_viewer from conf, or xdg-open)
-# Use the tweet url that contains the article link (or simply just the id)
-article2img --guest --save-html out.html --view https://x.com/ARCRaidersGame/status/2054607629738037736
+# Preferred: auto-save HTML and open immediately
+article2img --guest --view-html https://x.com/ARCRaidersGame/status/2054607629738037736
 
-# Simplify with an alias
-alias tw-article='article2img --guest --save-html /tmp/out.html --view > /dev/null'
+# Simplify further with an alias
+alias tw-article='article2img --guest --view-html'
 tw-article https://x.com/XDevelopers/status/2041295840325636551
 ```
+
+Set `article_viewer = firefox` in `tw2img.conf` to control which browser opens the file.
