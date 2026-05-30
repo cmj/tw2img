@@ -95,7 +95,7 @@ BEARER = "AAAAAAAAAAAAAAAAAAAAANRILgAAAAAAnNwIzUejRCOuH5E6I8xnZz4puTs%3D1Zv7ttfk
 UA = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
 
 TWEET_DETAIL_URL        = "https://x.com/i/api/graphql/xIYgDwjboktoFeXe_fgacw/TweetDetail"
-TWEET_RESULT_URL        = "https://api.twitter.com/graphql/2Acdg-VztGlHX7MjX67Ysw/TweetResultByRestId"
+TWEET_RESULT_URL        = "https://api.x.com/graphql/SgZWKwvBiOKrSC0QeOGvXw/TweetResultByRestId"
 USER_BY_SCREEN_NAME_URL = "https://x.com/i/api/graphql/laYnJPCAcVo0o6pzcnlVxQ/UserByScreenName"
 USER_TWEETS_URL         = "https://x.com/i/api/graphql/fgsimYxdCfQmTI_dtJsTXw/UserTweets"
 GUEST_TOKEN_URL         = "https://api.twitter.com/1.1/guest/activate.json"
@@ -129,22 +129,35 @@ TWEET_DETAIL_FEAT   = {"rweb_video_screen_enabled": False, "profile_label_improv
 TWEET_DETAIL_FTOG   = {"withArticleRichContentState": True, "withArticlePlainText": False,
     "withArticleSummaryText": True, "withArticleVoiceOver": True, "withGrokAnalyze": False,
     "withDisallowedReplyControls": False}
+TWEET_RESULT_FTOG   = {"withArticleRichContentState": True, "withArticlePlainText": False,
+    "withArticleSummaryText": True, "withArticleVoiceOver": True, "withGrokAnalyze": False,
+    "withDisallowedReplyControls": False}
 
 TWEET_RESULT_FEAT   = {"creator_subscriptions_tweet_preview_api_enabled": True,
-    "communities_web_enable_tweet_community_results_fetch": True,
-    "c9s_tweet_anatomy_moderator_badge_enabled": True, "articles_preview_enabled": True,
-    "responsive_web_edit_tweet_api_enabled": True,
+    "premium_content_api_read_enabled": False, "communities_web_enable_tweet_community_results_fetch": True,
+    "c9s_tweet_anatomy_moderator_badge_enabled": True,
+    "responsive_web_grok_analyze_button_fetch_trends_enabled": False,
+    "responsive_web_grok_analyze_post_followups_enabled": False,
+    "rweb_cashtags_composer_attachment_enabled": True, "responsive_web_jetfuel_frame": True,
+    "responsive_web_grok_share_attachment_enabled": True, "responsive_web_grok_annotations_enabled": True,
+    "articles_preview_enabled": True, "responsive_web_edit_tweet_api_enabled": True,
+    "rweb_conversational_replies_downvote_enabled": False,
     "graphql_is_translatable_rweb_tweet_is_translatable_enabled": True,
     "view_counts_everywhere_api_enabled": True, "longform_notetweets_consumption_enabled": True,
-    "responsive_web_twitter_article_tweet_consumption_enabled": True, "tweet_awards_web_tipping_enabled": False,
-    "creator_subscriptions_quote_tweet_preview_enabled": False, "freedom_of_speech_not_reach_fetch_enabled": True,
-    "standardized_nudges_misinfo": True,
+    "responsive_web_twitter_article_tweet_consumption_enabled": True,
+    "content_disclosure_indicator_enabled": True, "content_disclosure_ai_generated_indicator_enabled": True,
+    "responsive_web_grok_show_grok_translated_post": True, "responsive_web_grok_analysis_button_from_backend": True,
+    "post_ctas_fetch_enabled": True, "rweb_cashtags_enabled": True,
+    "freedom_of_speech_not_reach_fetch_enabled": True, "standardized_nudges_misinfo": True,
     "tweet_with_visibility_results_prefer_gql_limited_actions_policy_enabled": True,
-    "rweb_video_timestamps_enabled": True, "longform_notetweets_rich_text_read_enabled": True,
-    "longform_notetweets_inline_media_enabled": True, "rweb_tipjar_consumption_enabled": True,
-    "responsive_web_graphql_exclude_directive_enabled": True, "verified_phone_label_enabled": False,
+    "longform_notetweets_rich_text_read_enabled": True, "longform_notetweets_inline_media_enabled": False,
+    "profile_label_improvements_pcf_label_in_post_enabled": True,
+    "responsive_web_profile_redirect_enabled": False, "rweb_tipjar_consumption_enabled": False,
+    "verified_phone_label_enabled": False,
+    "responsive_web_grok_image_annotation_enabled": True, "responsive_web_grok_imagine_annotation_enabled": True,
+    "responsive_web_grok_community_note_auto_translation_is_enabled": True,
     "responsive_web_graphql_skip_user_profile_image_extensions_enabled": False,
-    "responsive_web_graphql_timeline_navigation_enabled": True, "responsive_web_enhance_cards_enabled": False}
+    "responsive_web_graphql_timeline_navigation_enabled": True}
 
 USER_BY_SCREEN_NAME_FEAT = {"hidden_profile_subscriptions_enabled": True,
     "rweb_tipjar_consumption_enabled": True,
@@ -288,6 +301,7 @@ def fetch_tweet_result(tweet_id, headers):
         "variables": json.dumps({"tweetId": tweet_id, "referrer": "home",
                                   "withCommunity": False, "includePromotedContent": False, "withVoice": False}),
         "features":  json.dumps(TWEET_RESULT_FEAT),
+        "fieldToggles": json.dumps(TWEET_RESULT_FTOG),
     })
 
 def fetch_user_id(screen_name, headers):
@@ -882,7 +896,7 @@ def media_html(ext_entities, is_ai=False):
             )
 
     ai_label = (
-        '<div class="ai-label" style="font-size:10px;color:var(--grey);margin-top:3px;display:flex;align-items:center;gap:0;">'
+        '<div class="ai-label" style="font-size:12px;color:var(--grey);margin-top:3px;display:flex;align-items:center;gap:0;">'
         + icon_svg("robot", 18, "var(--grey)")
         + 'Made with AI'
         '</div>'
