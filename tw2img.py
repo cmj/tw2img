@@ -628,6 +628,26 @@ def _parse_tweet_result(result, user_parser):
     grok_question = grok_items[0].get("message", "") if len(grok_items) > 0 else ""
     grok_answer   = grok_items[1].get("message", "") if len(grok_items) > 1 else ""
 
+    # Fallback: unified_card grok_share format (card.legacy.binding_values[unified_card])
+    if not grok_answer and raw_card:
+        uc_str = bv.get("unified_card", {}).get("string_value", "")
+        if uc_str:
+            try:
+                uc = json.loads(uc_str)
+                for comp in uc.get("component_objects", {}).values():
+                    if comp.get("type") == "grok_share":
+                        preview = comp.get("data", {}).get("conversation_preview", [])
+                        for item in preview:
+                            sender = item.get("sender", "")
+                            msg    = item.get("message", "")
+                            if sender == "USER" and not grok_question:
+                                grok_question = msg
+                            elif sender == "AGENT" and not grok_answer:
+                                grok_answer = msg
+                        break
+            except (json.JSONDecodeError, AttributeError):
+                pass
+
     return {
         "id":              result.get("rest_id"),
         "user":            user,
@@ -1217,19 +1237,76 @@ GROK_SVG = (
     '</svg>'
 )
 
-def _md_to_html(text):
-    """Convert a small subset of Markdown (bold, headers, bullets, newlines) to HTML."""
+def _linkify_md(text):
+    """Replace markdown [label](url) / [](url) with <a> tags in already-escaped text.
+    The input *text* must NOT yet be html-escaped; escaping is done here per segment."""
     import html as _html
+    # Pattern: [label](url)  — label may be empty
+    parts = re.split(r'(\[[^\]]*\]\([^)]+\))', text)
+    out = []
+    for p in parts:
+        m = re.match(r'\[([^\]]*)\]\(([^)]+)\)', p)
+        if m:
+            label, url = m.group(1).strip(), m.group(2).strip()
+            display = _html.escape(label) if label else _html.escape(url)
+            out.append(f'<a href="{_html.escape(url)}">{display}</a>')
+        else:
+            out.append(_html.escape(p))
+    return "".join(out)
+
+def _apply_inline_md(raw):
+    """Apply bold and link markdown to a raw (unescaped) string, return HTML."""
+    # Split on **bold** first, then linkify each segment
+    segments = re.split(r'(\*\*.*?\*\*)', raw)
+    out = []
+    for seg in segments:
+        bm = re.match(r'\*\*(.+?)\*\*', seg)
+        if bm:
+            inner = _linkify_md(bm.group(1))
+            out.append(f'<strong>{inner}</strong>')
+        else:
+            out.append(_linkify_md(seg))
+    return "".join(out)
+
+def _is_bare_link_line(line):
+    """Return the URL if *line* is solely a markdown link [label](url) or [](url), else None."""
+    m = re.fullmatch(r'\[([^\]]*)\]\(([^)]+)\)', line.strip())
+    return m.group(2).strip() if m else None
+
+def _md_to_html(text):
+    """Convert Markdown subset (bold, headers, bullets, [label](url) links) to HTML.
+    Trailing lines that consist solely of a markdown link are collected into a
+    Sources section rendered as plain <a> blocks, one per line."""
+    # Pre-process: any [label](url) token gets its own line, handles Grok appending
+    # sources inline without newlines: "...actions.[](https://axios.com/...)[](https://...)"
+    text = re.sub(r'(\[[^\]]*\]\([^)]+\))', r'\n\1\n', text)
+    text = re.sub(r'\n{3,}', '\n\n', text).strip()
     lines = text.split("\n")
+
+    # Peel off trailing blank + bare-link lines to render as sources
+    sources = []
+    i = len(lines) - 1
+    while i >= 0:
+        stripped = lines[i].strip()
+        url = _is_bare_link_line(stripped)
+        if url:
+            sources.insert(0, (stripped, url))
+            i -= 1
+        elif stripped == "":
+            i -= 1
+        else:
+            break
+    body_lines = lines[:i + 1]
+
     out = []
     in_list = False
-    for line in lines:
+    for line in body_lines:
         hm = re.match(r'^#{1,3}\s+(.*)', line)
         if hm:
             if in_list:
                 out.append("</ul>")
                 in_list = False
-            content = re.sub(r'\*\*(.+?)\*\*', r'<strong>\1</strong>', _html.escape(hm.group(1)))
+            content = _apply_inline_md(hm.group(1))
             out.append(f'<div style="font-weight:700;margin-top:8px;margin-bottom:2px;">{content}</div>')
             continue
         bm = re.match(r'^[-*]\s+(.*)', line)
@@ -1237,7 +1314,7 @@ def _md_to_html(text):
             if not in_list:
                 out.append('<ul style="padding-left:16px;margin:4px 0;">')
                 in_list = True
-            content = re.sub(r'\*\*(.+?)\*\*', r'<strong>\1</strong>', _html.escape(bm.group(1)))
+            content = _apply_inline_md(bm.group(1))
             out.append(f'<li style="margin-bottom:2px;">{content}</li>')
             continue
         if in_list:
@@ -1246,10 +1323,19 @@ def _md_to_html(text):
         if line.strip() == "":
             out.append('<div style="height:6px;"></div>')
             continue
-        content = re.sub(r'\*\*(.+?)\*\*', r'<strong>\1</strong>', _html.escape(line))
-        out.append(f'<div>{content}</div>')
+        out.append(f'<div>{_apply_inline_md(line)}</div>')
     if in_list:
         out.append("</ul>")
+
+    if sources:
+        import html as _html
+        out.append('<div style="margin-top:8px;padding-top:6px;border-top:1px solid var(--border);display:block;">')
+        for raw_link, url in sources:
+            m = re.fullmatch(r'\[([^\]]*)\]\(([^)]+)\)', raw_link.strip())
+            label = m.group(1).strip() if m and m.group(1).strip() else url
+            out.append(f'<a href="{_html.escape(url)}" style="display:block;margin-top:4px;font-size:12px;color:var(--link);word-break:break-all;text-decoration:none;">{_html.escape(label)}</a>')
+        out.append("</div>")
+
     return "\n".join(out)
 
 def grok_card_html(question, answer):
