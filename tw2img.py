@@ -622,6 +622,12 @@ def _parse_tweet_result(result, user_parser):
             rt_result=rt_result if rt_result else None,
         )
 
+    # Extract Grok share attachment
+    grok_attachment = result.get("grok_share_attachment") or {}
+    grok_items = grok_attachment.get("items", [])
+    grok_question = grok_items[0].get("message", "") if len(grok_items) > 0 else ""
+    grok_answer   = grok_items[1].get("message", "") if len(grok_items) > 1 else ""
+
     return {
         "id":              result.get("rest_id"),
         "user":            user,
@@ -647,6 +653,8 @@ def _parse_tweet_result(result, user_parser):
         "birdwatch":       bw_note,
         "birdwatch_ents":  bw_ents,
         "broadcast_card":  broadcast_card,
+        "grok_question":   grok_question,
+        "grok_answer":     grok_answer,
         "rt_by_user":      None,
     }
 
@@ -1195,6 +1203,73 @@ def quote_block_html(qt):
   {media}
 </div>"""
 
+GROK_SVG = (
+    '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 33 32" width="16" height="16" '
+    'style="display:inline-block;vertical-align:middle;margin-right:5px;flex-shrink:0">'
+    '<path fill="var(--grey)" d="M 12.745 20.54 l 10.97 -8.19 c 0.539 -0.4 1.307 -0.244 1.564 0.38'
+    ' c 1.349 3.288 0.746 7.241 -1.938 9.955 c -2.683 2.714 -6.417 3.31 -9.83 1.954 l -3.728 1.745'
+    ' c 5.347 3.697 11.84 2.782 15.898 -1.324 c 3.219 -3.255 4.216 -7.692 3.284 -11.693 l 0.008 0.009'
+    ' c -1.351 -5.878 0.332 -8.227 3.782 -13.031 L 33 0 l -4.54 4.59 v -0.014 L 12.743 20.544'
+    ' m -2.263 1.987 c -3.837 -3.707 -3.175 -9.446 0.1 -12.755 c 2.42 -2.449 6.388 -3.448 9.852 -1.979'
+    ' l 3.72 -1.737 c -0.67 -0.49 -1.53 -1.017 -2.515 -1.387 c -4.455 -1.854 -9.789 -0.931 -13.41 2.728'
+    ' c -3.483 3.523 -4.579 8.94 -2.697 13.561 c 1.405 3.454 -0.899 5.898 -3.22 8.364'
+    ' C 1.49 30.2 0.666 31.074 0 32 l 10.478 -9.466"/>'
+    '</svg>'
+)
+
+def _md_to_html(text):
+    """Convert a small subset of Markdown (bold, headers, bullets, newlines) to HTML."""
+    import html as _html
+    lines = text.split("\n")
+    out = []
+    in_list = False
+    for line in lines:
+        hm = re.match(r'^#{1,3}\s+(.*)', line)
+        if hm:
+            if in_list:
+                out.append("</ul>")
+                in_list = False
+            content = re.sub(r'\*\*(.+?)\*\*', r'<strong>\1</strong>', _html.escape(hm.group(1)))
+            out.append(f'<div style="font-weight:700;margin-top:8px;margin-bottom:2px;">{content}</div>')
+            continue
+        bm = re.match(r'^[-*]\s+(.*)', line)
+        if bm:
+            if not in_list:
+                out.append('<ul style="padding-left:16px;margin:4px 0;">')
+                in_list = True
+            content = re.sub(r'\*\*(.+?)\*\*', r'<strong>\1</strong>', _html.escape(bm.group(1)))
+            out.append(f'<li style="margin-bottom:2px;">{content}</li>')
+            continue
+        if in_list:
+            out.append("</ul>")
+            in_list = False
+        if line.strip() == "":
+            out.append('<div style="height:6px;"></div>')
+            continue
+        content = re.sub(r'\*\*(.+?)\*\*', r'<strong>\1</strong>', _html.escape(line))
+        out.append(f'<div>{content}</div>')
+    if in_list:
+        out.append("</ul>")
+    return "\n".join(out)
+
+def grok_card_html(question, answer):
+    """Render a Grok share attachment card styled like X's native Grok response card."""
+    if not answer:
+        return ""
+    q_html = f'<div style="font-weight:700;font-size:14px;margin-bottom:8px;">{question}</div>' if question else ""
+    a_html = _md_to_html(answer)
+    return f'''<div class="grok-card" style="border:1px solid var(--border);border-radius:12px;margin:6px 0;overflow:hidden;">
+  <div style="background:var(--qt-bg);padding:10px 12px 12px;">
+    <div style="display:flex;align-items:center;font-size:12px;color:var(--grey);margin-bottom:8px;">
+      {GROK_SVG}<span>Answer by Grok</span>
+    </div>
+    {q_html}
+    <div style="font-size:13px;line-height:1.5;color:var(--fg);">
+      {a_html}
+    </div>
+  </div>
+</div>'''
+
 def card_html(card):
     if not card: return ""
     if card.get("is_player") and card.get("img_url"):
@@ -1264,6 +1339,7 @@ def tweet_row_html(t, is_parent=False, no_source=False):
         replying = f'<div class="replying-to">Replying to {links}</div>'
 
     card_block = card_html(t.get("card")) if not t.get("ext_entities", {}).get("media") else ""
+    grok_html = grok_card_html(t.get("grok_question", ""), t.get("grok_answer", ""))
     qt_html = quote_block_html(t["quoted"]) if t.get("quoted") else ""
     bw_html = ""
     if t.get("birdwatch"):
@@ -1339,6 +1415,7 @@ def tweet_row_html(t, is_parent=False, no_source=False):
     <div class="tweet-content">{tweet_text}</div>
     {_trans_label_html(t.get("translated_from"))}
     {media_block}
+    {grok_html}
     {card_block}
     {qt_html}
     {bw_html}
@@ -1361,6 +1438,7 @@ def tweet_row_html(t, is_parent=False, no_source=False):
     <div class="tweet-content">{tweet_text}</div>
     {_trans_label_html(t.get("translated_from"))}
     {media_block}
+    {grok_html}
     {card_block}
     {qt_html}
     {bw_html}
