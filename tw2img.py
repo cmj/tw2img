@@ -100,6 +100,10 @@ _LANG_NAMES = {
     "xh": "Xhosa", "yi": "Yiddish", "yo": "Yoruba", "zu": "Zulu",
 }
 
+# Twitter-specific language codes that cannot be translated.
+# See: https://github.com/igorbrigadir/twitter-advanced-search#supported-languages
+_UNTRANSLATABLE_LANGS = {"und", "qam", "qct", "qht", "qme", "qst", "zxx"}
+
 def _lang_display_name(code):
     """Return a human-readable name for a BCP-47 language code, e.g. 'ja' -> 'Japanese'."""
     if not code or code == "auto":
@@ -1835,7 +1839,9 @@ async def _main():
             # legacy.lang is a BCP-47 tag (e.g. "en", "ja") from the API.
             # Compare only the primary subtag so "zh-Hant" won't skip --trans zh.
             tweet_lang = (t.get("lang") or "").split("-")[0].lower()
-            if tweet_lang and tweet_lang == tgt_primary:
+            if tweet_lang in _UNTRANSLATABLE_LANGS:
+                pass  # untranslatable Twitter-specific lang code; skip, but still check quoted below
+            elif tweet_lang and tweet_lang == tgt_primary:
                 pass  # don't translate, but still check quoted below
             else:
                 effective_src = src_lang if src_lang != "auto" else (tweet_lang or "auto")
@@ -1846,7 +1852,9 @@ async def _main():
             qt = t.get("quoted")
             if qt and not qt.get("__tombstone") and qt.get("full_text"):
                 qt_lang = (qt.get("lang") or "").split("-")[0].lower()
-                if not qt_lang or qt_lang != tgt_primary:
+                if qt_lang in _UNTRANSLATABLE_LANGS:
+                    pass  # untranslatable Twitter-specific lang code; skip
+                elif not qt_lang or qt_lang != tgt_primary:
                     qt_src = src_lang if src_lang != "auto" else (qt_lang or "auto")
                     print(f"Translating quoted tweet text ({qt_src} -> {tgt_lang}) ...", file=sys.stderr)
                     qt["full_text"] = translate_text(qt["full_text"], qt_src, tgt_lang)
