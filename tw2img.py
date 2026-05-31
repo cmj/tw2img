@@ -29,13 +29,17 @@ Config file (INI format, [tw2img] section):
     Example:  tw2img.py 12345 -c ~/work/tw2img-work.conf --light
 
     Viewer settings (open saved file automatically):
-      view   = true              # enable auto-open after saving
-      viewer = viewnior          # PNG viewer  (default when --save-html not used)
-      viewer = kitty +icat {}    # terminal inline display (kitty)
-      viewer = eog               # GNOME image viewer
-      viewer = firefox           # good default when saving as HTML (--save-html)
-      viewer = xdg-open          # let the OS pick the right app
+      view      = true              # enable auto-open of PNG after saving
+      viewer    = viewnior          # PNG viewer  (default for --view)
+      viewer    = kitty +icat {}    # terminal inline display (kitty)
+      viewer    = eog               # GNOME image viewer
+      viewer    = firefox           # used by --view-html (falls back to xdg-open)
+      viewer    = xdg-open          # let the OS pick the right app
+      view_html = true              # always auto-save + open HTML alongside the PNG
     Use {} as a placeholder for the filename; otherwise the path is appended.
+    --view-html saves <name>.html next to the PNG and opens it in the browser
+      (uses --viewer if set, otherwise xdg-open). If no PNG is otherwise needed
+      (no --view, no --imgur, no explicit output path), Playwright is not required.
 """
 
 import sys, json, re, os, argparse, asyncio, tempfile, urllib.request, urllib.parse, configparser
@@ -65,6 +69,43 @@ def load_config(extra_path=None):
         sources.append(p)
     cfg.read([str(s) for s in sources])
     return dict(cfg["tw2img"]) if "tw2img" in cfg else {}
+
+_LANG_NAMES = {
+    "af": "Afrikaans", "sq": "Albanian", "am": "Amharic", "ar": "Arabic",
+    "hy": "Armenian", "az": "Azerbaijani", "eu": "Basque", "be": "Belarusian",
+    "bn": "Bengali", "bs": "Bosnian", "bg": "Bulgarian", "ca": "Catalan",
+    "ceb": "Cebuano", "zh": "Chinese", "co": "Corsican", "hr": "Croatian",
+    "cs": "Czech", "da": "Danish", "nl": "Dutch", "en": "English",
+    "eo": "Esperanto", "et": "Estonian", "fi": "Finnish", "fr": "French",
+    "fy": "Frisian", "gl": "Galician", "ka": "Georgian", "de": "German",
+    "el": "Greek", "gu": "Gujarati", "ht": "Haitian Creole", "ha": "Hausa",
+    "haw": "Hawaiian", "he": "Hebrew", "hi": "Hindi", "hmn": "Hmong",
+    "hu": "Hungarian", "is": "Icelandic", "ig": "Igbo", "id": "Indonesian",
+    "ga": "Irish", "it": "Italian", "ja": "Japanese", "jv": "Javanese",
+    "kn": "Kannada", "kk": "Kazakh", "km": "Khmer", "rw": "Kinyarwanda",
+    "ko": "Korean", "ku": "Kurdish", "ky": "Kyrgyz", "lo": "Lao",
+    "la": "Latin", "lv": "Latvian", "lt": "Lithuanian", "lb": "Luxembourgish",
+    "mk": "Macedonian", "mg": "Malagasy", "ms": "Malay", "ml": "Malayalam",
+    "mt": "Maltese", "mi": "Maori", "mr": "Marathi", "mn": "Mongolian",
+    "my": "Myanmar", "ne": "Nepali", "no": "Norwegian", "ny": "Nyanja",
+    "or": "Odia", "ps": "Pashto", "fa": "Persian", "pl": "Polish",
+    "pt": "Portuguese", "pa": "Punjabi", "ro": "Romanian", "ru": "Russian",
+    "sm": "Samoan", "gd": "Scots Gaelic", "sr": "Serbian", "st": "Sesotho",
+    "sn": "Shona", "sd": "Sindhi", "si": "Sinhala", "sk": "Slovak",
+    "sl": "Slovenian", "so": "Somali", "es": "Spanish", "su": "Sundanese",
+    "sw": "Swahili", "sv": "Swedish", "tl": "Filipino", "tg": "Tajik",
+    "ta": "Tamil", "tt": "Tatar", "te": "Telugu", "th": "Thai",
+    "tr": "Turkish", "tk": "Turkmen", "uk": "Ukrainian", "ur": "Urdu",
+    "ug": "Uyghur", "uz": "Uzbek", "vi": "Vietnamese", "cy": "Welsh",
+    "xh": "Xhosa", "yi": "Yiddish", "yo": "Yoruba", "zu": "Zulu",
+}
+
+def _lang_display_name(code):
+    """Return a human-readable name for a BCP-47 language code, e.g. 'ja' -> 'Japanese'."""
+    if not code or code == "auto":
+        return code or "Unknown"
+    primary = code.split("-")[0].lower()
+    return _LANG_NAMES.get(primary, code)
 
 def translate_text(text, source_lang, target_lang):
     """Translate *text* from *source_lang* to *target_lang* using deep-translator.
@@ -1101,6 +1142,16 @@ SHARED_CSS = """
 .rt-header svg { flex-shrink: 0; }
 """
 
+def _trans_label_html(lang_name):
+    """Return a tiny 'Translated from X' label in accent colour, or empty string."""
+    if not lang_name:
+        return ""
+    return (
+        f'<div class="translated-from" style="font-size:10px;color:var(--accent);'
+        f'margin-top:3px;line-height:1.3;opacity:0.75;">'
+        f'Translated from {lang_name}</div>'
+    )
+
 def quote_block_html(qt):
     if not qt: return ""
     if qt.get("__tombstone"):
@@ -1140,6 +1191,7 @@ def quote_block_html(qt):
     <span class="quote-time">{time}</span>
   </div>
   <div class="quote-text">{text}</div>
+  {_trans_label_html(qt.get("translated_from"))}
   {media}
 </div>"""
 
@@ -1285,6 +1337,7 @@ def tweet_row_html(t, is_parent=False, no_source=False):
     </div>
     {replying}
     <div class="tweet-content">{tweet_text}</div>
+    {_trans_label_html(t.get("translated_from"))}
     {media_block}
     {card_block}
     {qt_html}
@@ -1306,6 +1359,7 @@ def tweet_row_html(t, is_parent=False, no_source=False):
   <div class="focal-body">
     {replying}
     <div class="tweet-content">{tweet_text}</div>
+    {_trans_label_html(t.get("translated_from"))}
     {media_block}
     {card_block}
     {qt_html}
@@ -1482,7 +1536,10 @@ async def _main():
                    help="Save HTML instead of rendering PNG. "
                         "Omit FILE to auto-name as <user>-<id>.html in the same directory as the PNG output.")
     p.add_argument("--view-html",  action="store_true", default=_b("view_html"),
-                   help="Shorthand for --save-html --view: auto-save HTML and open it immediately.")
+                   help="Auto-save HTML alongside the PNG (same directory, same base name) and open it "
+                        "in the browser defined by --viewer (or xdg-open if not set). "
+                        "If no PNG is otherwise needed (no --view, no --imgur, no explicit output path), "
+                        "Playwright is skipped entirely")
     p.add_argument("--output-dir", default=conf.get("output_dir") or None, metavar="DIR",
                    help="Directory to save output PNG (default: current working directory)")
     p.add_argument("--imgur",      action="store_true", default=_b("imgur"), help="Upload PNG to imgur after rendering")
@@ -1510,11 +1567,9 @@ async def _main():
                         "Examples: viewnior  |  eog  |  'kitty +icat {}'  |  firefox")
     args = p.parse_args()
 
-    # --view-html is shorthand for --save-html (auto-named) + --view
-    if args.view_html:
-        if args.save_html is None:
-            args.save_html = ""
-        args.view = True
+    # --view-html is shorthand for: auto-save HTML next to the PNG, then open in browser.
+    # We defer the actual save/open until after the output path is resolved below.
+    _view_html_requested = args.view_html
 
     # Apply full-stats flag globally so fmt() picks it up
     global _FULL_STATS
@@ -1608,6 +1663,7 @@ async def _main():
             src_lang, tgt_lang = raw.split(":", 1)
         else:
             src_lang, tgt_lang = "auto", raw
+        tgt_primary = tgt_lang.split("-")[0].lower()
         for t in tweets:
             if t.get("__tombstone"):
                 continue
@@ -1615,19 +1671,22 @@ async def _main():
             # legacy.lang is a BCP-47 tag (e.g. "en", "ja") from the API.
             # Compare only the primary subtag so "zh-Hant" won't skip --trans zh.
             tweet_lang = (t.get("lang") or "").split("-")[0].lower()
-            tgt_primary = tgt_lang.split("-")[0].lower()
             if tweet_lang and tweet_lang == tgt_primary:
-                continue
-            effective_src = src_lang if src_lang != "auto" else (tweet_lang or "auto")
-            print(f"Translating tweet text ({effective_src} -> {tgt_lang}) ...", file=sys.stderr)
-            if t.get("full_text"):
-                t["full_text"] = translate_text(t["full_text"], effective_src, tgt_lang)
+                pass  # don't translate, but still check quoted below
+            else:
+                effective_src = src_lang if src_lang != "auto" else (tweet_lang or "auto")
+                if t.get("full_text"):
+                    print(f"Translating tweet text ({effective_src} -> {tgt_lang}) ...", file=sys.stderr)
+                    t["full_text"] = translate_text(t["full_text"], effective_src, tgt_lang)
+                    t["translated_from"] = _lang_display_name(effective_src)
             qt = t.get("quoted")
             if qt and not qt.get("__tombstone") and qt.get("full_text"):
                 qt_lang = (qt.get("lang") or "").split("-")[0].lower()
                 if not qt_lang or qt_lang != tgt_primary:
                     qt_src = src_lang if src_lang != "auto" else (qt_lang or "auto")
+                    print(f"Translating quoted tweet text ({qt_src} -> {tgt_lang}) ...", file=sys.stderr)
                     qt["full_text"] = translate_text(qt["full_text"], qt_src, tgt_lang)
+                    qt["translated_from"] = _lang_display_name(qt_src)
 
     if args.print_line:
         print(format_tweet_line(focal))
@@ -1656,7 +1715,7 @@ async def _main():
         output = resolve_output_path(output, dup_mode)
 
     html = build_html(tweets, light=args.light, no_source=args.no_source, css_path=args.css, width=args.width, nitter=args.nitter,
-                      for_browser=(args.save_html is not None))
+                      for_browser=(args.save_html is not None or _view_html_requested))
 
     if args.save_html is not None:
         if args.save_html == "":
@@ -1673,6 +1732,20 @@ async def _main():
             viewer = args.viewer or "firefox"
             open_with_viewer(html_path, viewer)
         return
+
+    # --view-html: save HTML alongside the PNG, open in browser.
+    # If no PNG is otherwise needed (no --view, no --imgur, no explicit output path),
+    # skip Playwright entirely, the browser is the viewer.
+    if _view_html_requested:
+        html_path = str(Path(output).with_suffix(".html"))
+        with open(html_path, 'w', encoding='utf-8') as f:
+            f.write(html)
+        print(f"HTML saved to {html_path}")
+        browser_viewer = args.viewer or "xdg-open"
+        open_with_viewer(html_path, browser_viewer)
+        png_needed = args.output or args.view or args.imgur
+        if not png_needed:
+            return
 
     if args.html_only:
         print(html)
