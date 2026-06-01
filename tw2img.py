@@ -70,72 +70,6 @@ def load_config(extra_path=None):
     cfg.read([str(s) for s in sources])
     return dict(cfg["tw2img"]) if "tw2img" in cfg else {}
 
-_LANG_NAMES = {
-    "af": "Afrikaans", "sq": "Albanian", "am": "Amharic", "ar": "Arabic",
-    "hy": "Armenian", "az": "Azerbaijani", "eu": "Basque", "be": "Belarusian",
-    "bn": "Bengali", "bs": "Bosnian", "bg": "Bulgarian", "ca": "Catalan",
-    "ceb": "Cebuano", "zh": "Chinese", "co": "Corsican", "hr": "Croatian",
-    "cs": "Czech", "da": "Danish", "nl": "Dutch", "en": "English",
-    "eo": "Esperanto", "et": "Estonian", "fi": "Finnish", "fr": "French",
-    "fy": "Frisian", "gl": "Galician", "ka": "Georgian", "de": "German",
-    "el": "Greek", "gu": "Gujarati", "ht": "Haitian Creole", "ha": "Hausa",
-    "haw": "Hawaiian", "he": "Hebrew", "hi": "Hindi", "hmn": "Hmong",
-    "hu": "Hungarian", "is": "Icelandic", "ig": "Igbo", "id": "Indonesian",
-    "ga": "Irish", "it": "Italian", "ja": "Japanese", "jv": "Javanese",
-    "kn": "Kannada", "kk": "Kazakh", "km": "Khmer", "rw": "Kinyarwanda",
-    "ko": "Korean", "ku": "Kurdish", "ky": "Kyrgyz", "lo": "Lao",
-    "la": "Latin", "lv": "Latvian", "lt": "Lithuanian", "lb": "Luxembourgish",
-    "mk": "Macedonian", "mg": "Malagasy", "ms": "Malay", "ml": "Malayalam",
-    "mt": "Maltese", "mi": "Maori", "mr": "Marathi", "mn": "Mongolian",
-    "my": "Myanmar", "ne": "Nepali", "no": "Norwegian", "ny": "Nyanja",
-    "or": "Odia", "ps": "Pashto", "fa": "Persian", "pl": "Polish",
-    "pt": "Portuguese", "pa": "Punjabi", "ro": "Romanian", "ru": "Russian",
-    "sm": "Samoan", "gd": "Scots Gaelic", "sr": "Serbian", "st": "Sesotho",
-    "sn": "Shona", "sd": "Sindhi", "si": "Sinhala", "sk": "Slovak",
-    "sl": "Slovenian", "so": "Somali", "es": "Spanish", "su": "Sundanese",
-    "sw": "Swahili", "sv": "Swedish", "tl": "Filipino", "tg": "Tajik",
-    "ta": "Tamil", "tt": "Tatar", "te": "Telugu", "th": "Thai",
-    "tr": "Turkish", "tk": "Turkmen", "uk": "Ukrainian", "ur": "Urdu",
-    "ug": "Uyghur", "uz": "Uzbek", "vi": "Vietnamese", "cy": "Welsh",
-    "xh": "Xhosa", "yi": "Yiddish", "yo": "Yoruba", "zu": "Zulu",
-}
-
-# Twitter-specific language codes that cannot be translated.
-# See: https://github.com/igorbrigadir/twitter-advanced-search#supported-languages
-_UNTRANSLATABLE_LANGS = {"und", "qam", "qct", "qht", "qme", "qst", "zxx"}
-
-def _lang_display_name(code):
-    """Return a human-readable name for a BCP-47 language code, e.g. 'ja' -> 'Japanese'."""
-    if not code or code == "auto":
-        return code or "Unknown"
-    primary = code.split("-")[0].lower()
-    return _LANG_NAMES.get(primary, code)
-
-def translate_text(text, source_lang, target_lang):
-    """Translate *text* from *source_lang* to *target_lang* using deep-translator.
-
-    Lazily imports deep-translator so it is not a hard requirement.
-    Install with: pip install deep-translator
-
-    Returns the translated string, or the original text on any error.
-    source_lang / target_lang use BCP-47 / ISO 639-1 codes (e.g. 'ja', 'en', 'auto').
-    Pass source_lang='auto' to let the library detect the language.
-    """
-    try:
-        from deep_translator import GoogleTranslator
-    except ImportError:
-        sys.exit(
-            "Error: deep-translator is required for translation.\n"
-            "Install it with: pip install deep-translator"
-        )
-    try:
-        translated = GoogleTranslator(source=source_lang, target=target_lang).translate(text)
-        return translated or text
-    except Exception as e:
-        print(f"Warning: translation failed ({e}), using original text.", file=sys.stderr)
-        return text
-
-
 BEARER = "AAAAAAAAAAAAAAAAAAAAANRILgAAAAAAnNwIzUejRCOuH5E6I8xnZz4puTs%3D1Zv7ttfk8LF81IUq16cHjhLTvJu4FA33AGWWjCpTnA"
 UA = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
 
@@ -1136,7 +1070,8 @@ SHARED_CSS = """
 .media-grid-5 .row-top { grid-column: 1 / span 2; display: grid; grid-template-columns: 1fr 1fr; gap: 3px; }
 .media-grid-5 .row-bottom { grid-column: 1 / span 2; display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 3px; }
 .attachment img { width: 100%; display: block; }
-.video-wrap { position: relative; }
+.video-wrap { position: relative; max-height: 510px; overflow: hidden; display: flex; justify-content: center; background: #000; }
+.video-wrap img { width: auto; height: auto; max-width: 100%; max-height: 510px; object-fit: contain; display: block; }
 .play-overlay { position: absolute; top: 0; left: 0; right: 0; bottom: 0; display: flex; align-items: center; justify-content: center; pointer-events: none; }
 .vid-duration { position: absolute; bottom: 6px; left: 8px; background: rgba(0,0,0,0.6); color: #fff; font-size: 12px; font-weight: 600; line-height: 1; padding: 3px 5px; border-radius: 4px; pointer-events: none; }
 .media-attribution { display: flex; align-items: center; gap: 6px; margin: 6px 0 4px; }
@@ -1152,6 +1087,8 @@ SHARED_CSS = """
 .quote-text { font-size: 14px; line-height: 1.45; white-space: pre-wrap; word-wrap: break-word; }
 .quote-media { margin-top: 6px; border-radius: 8px; overflow: hidden; }
 .quote-media img { width: 100%; display: block; }
+.quote-media .video-wrap { max-height: 400px; background: #000; }
+.quote-media .video-wrap img { width: auto; height: auto; max-width: 100%; max-height: 400px; object-fit: contain; }
 .birdwatch { border: 1px solid var(--border); border-radius: 10px; margin: 6px 0; background: var(--bw-bg); overflow: hidden; }
 .community-note-header { background-color: var(--bg-hover); font-weight: 700; font-size: 13px; padding: 6px 10px 8px; display: flex; align-items: center; gap: 12px; color: var(--fg); }
 .community-note-header .icon-container { flex-shrink: 0; color: var(--accent); }
@@ -1173,6 +1110,71 @@ SHARED_CSS = """
 .rt-header { display: flex; align-items: center; color: var(--grey); font-size: 13px; font-weight: 700; padding: 8px 14px 0 53px; gap: 5px; }
 .rt-header svg { flex-shrink: 0; }
 """
+
+_LANG_NAMES = {
+    "af": "Afrikaans", "sq": "Albanian", "am": "Amharic", "ar": "Arabic",
+    "hy": "Armenian", "az": "Azerbaijani", "eu": "Basque", "be": "Belarusian",
+    "bn": "Bengali", "bs": "Bosnian", "bg": "Bulgarian", "ca": "Catalan",
+    "ceb": "Cebuano", "zh": "Chinese", "co": "Corsican", "hr": "Croatian",
+    "cs": "Czech", "da": "Danish", "nl": "Dutch", "en": "English",
+    "eo": "Esperanto", "et": "Estonian", "fi": "Finnish", "fr": "French",
+    "fy": "Frisian", "gl": "Galician", "ka": "Georgian", "de": "German",
+    "el": "Greek", "gu": "Gujarati", "ht": "Haitian Creole", "ha": "Hausa",
+    "haw": "Hawaiian", "he": "Hebrew", "hi": "Hindi", "hmn": "Hmong",
+    "hu": "Hungarian", "is": "Icelandic", "ig": "Igbo", "id": "Indonesian",
+    "ga": "Irish", "it": "Italian", "ja": "Japanese", "jv": "Javanese",
+    "kn": "Kannada", "kk": "Kazakh", "km": "Khmer", "rw": "Kinyarwanda",
+    "ko": "Korean", "ku": "Kurdish", "ky": "Kyrgyz", "lo": "Lao",
+    "la": "Latin", "lv": "Latvian", "lt": "Lithuanian", "lb": "Luxembourgish",
+    "mk": "Macedonian", "mg": "Malagasy", "ms": "Malay", "ml": "Malayalam",
+    "mt": "Maltese", "mi": "Maori", "mr": "Marathi", "mn": "Mongolian",
+    "my": "Myanmar", "ne": "Nepali", "no": "Norwegian", "ny": "Nyanja",
+    "or": "Odia", "ps": "Pashto", "fa": "Persian", "pl": "Polish",
+    "pt": "Portuguese", "pa": "Punjabi", "ro": "Romanian", "ru": "Russian",
+    "sm": "Samoan", "gd": "Scots Gaelic", "sr": "Serbian", "st": "Sesotho",
+    "sn": "Shona", "sd": "Sindhi", "si": "Sinhala", "sk": "Slovak",
+    "sl": "Slovenian", "so": "Somali", "es": "Spanish", "su": "Sundanese",
+    "sw": "Swahili", "sv": "Swedish", "tl": "Filipino", "tg": "Tajik",
+    "ta": "Tamil", "tt": "Tatar", "te": "Telugu", "th": "Thai",
+    "tr": "Turkish", "tk": "Turkmen", "uk": "Ukrainian", "ur": "Urdu",
+    "ug": "Uyghur", "uz": "Uzbek", "vi": "Vietnamese", "cy": "Welsh",
+    "xh": "Xhosa", "yi": "Yiddish", "yo": "Yoruba", "zu": "Zulu",
+}
+
+# Twitter-specific language codes that cannot be translated.
+# See: https://github.com/igorbrigadir/twitter-advanced-search#supported-languages
+_UNTRANSLATABLE_LANGS = {"und", "qam", "qct", "qht", "qme", "qst", "zxx"}
+
+def _lang_display_name(code):
+    """Return a human-readable name for a BCP-47 language code, e.g. 'ja' -> 'Japanese'."""
+    if not code or code == "auto":
+        return code or "Unknown"
+    primary = code.split("-")[0].lower()
+    return _LANG_NAMES.get(primary, code)
+
+def translate_text(text, source_lang, target_lang):
+    """Translate *text* from *source_lang* to *target_lang* using deep-translator.
+
+    Lazily imports deep-translator so it is not a hard requirement.
+    Install with: pip install deep-translator
+
+    Returns the translated string, or the original text on any error.
+    source_lang / target_lang use BCP-47 / ISO 639-1 codes (e.g. 'ja', 'en', 'auto').
+    Pass source_lang='auto' to let the library detect the language.
+    """
+    try:
+        from deep_translator import GoogleTranslator
+    except ImportError:
+        sys.exit(
+            "Error: deep-translator is required for translation.\n"
+            "Install it with: pip install deep-translator"
+        )
+    try:
+        translated = GoogleTranslator(source=source_lang, target=target_lang).translate(text)
+        return translated or text
+    except Exception as e:
+        print(f"Warning: translation failed ({e}), using original text.", file=sys.stderr)
+        return text
 
 def _trans_label_html(lang_name):
     """Return a tiny 'Translated from X' label in accent colour, or empty string."""
@@ -1207,7 +1209,7 @@ def quote_block_html(qt):
             dur_html = f'<div class="vid-duration">{dur_label}</div>' if dur_label else ""
             media = (
                 f'<div class="quote-media">'
-                f'<div class="video-wrap" style="position:relative;">'
+                f'<div class="video-wrap">'
                 f'<img src="{m["media_url_https"]}">'
                 f'<div class="play-overlay">{PLAY_SVG}</div>'
                 f'{dur_html}'
@@ -1245,7 +1247,6 @@ def _linkify_md(text):
     """Replace markdown [label](url) / [](url) with <a> tags in already-escaped text.
     The input *text* must NOT yet be html-escaped; escaping is done here per segment."""
     import html as _html
-    # Pattern: [label](url)  — label may be empty
     parts = re.split(r'(\[[^\]]*\]\([^)]+\))', text)
     out = []
     for p in parts:
