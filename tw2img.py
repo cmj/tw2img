@@ -338,12 +338,25 @@ def _parse_user(ur):
     if not verified_type and ver.get("is_verified_business"):
         verified_type = "Business"
 
+    parody_raw = res.get("parody_commentary_fan_label")
+    parody_label = None
+    if parody_raw:
+        if isinstance(parody_raw, str):
+            parody_label = parody_raw
+        elif isinstance(parody_raw, dict):
+            parody_label = (
+                parody_raw.get("label")
+                or parody_raw.get("text")
+                or parody_raw.get("name")
+            )
+
     return {
         "name":           name,
         "screen_name":    screen_name,
         "avatar_url":     avatar_url.replace("_normal", "_bigger"),
         "is_blue_verified": res.get("is_blue_verified", False),
         "verified_type":  verified_type,
+        "parody_label":   parody_label,
     }
 
 def _extract_media_attribution(ext_entities, result=None, rt_result=None):
@@ -947,10 +960,15 @@ GLYPHS = {
     "views":   ("M180 516l0-538-180 0 0 538 180 0z m250-138l0-400-180 0 0 400 180 0z m250 344l0-744-180 0 0 744 180 0z", 680),
     "group":   ("M0 106l0 134q0 26 18 32l171 80q-66 39-68 131 0 56 35 103 37 41 90 43 31 0 63-19-49-125 23-237-12-11-25-19l-114-55q-48-23-52-84l0-143-114 0q-25 0-27 34z m193-59l0 168q0 27 22 37l152 70 57 28q-37 23-60 66t-22 94q0 76 46 130t110 54 109-54 45-130q0-105-78-158l61-30 146-70q24-10 24-37l0-168q-2-37-37-41l-541 0q-14 2-24 14t-10 27z m473 330q68 106 22 231 31 19 66 21 49 0 90-43 35-41 35-103 0-82-65-131l168-80q18-10 18-32l0-134q0-32-27-34l-118 0 0 143q0 57-50 84l-110 53q-15 8-29 25z", 1000),
     "robot":   ("M409.6 758.0 c-26.2 -9.8 -39.2 -37.0 -29.6 -62.4 1.7 -4.5 5.1 -10.6 7.6 -13.6 6.1 -7.3 17.3 -14.6 20.6 -13.4 2.2 0.8 2.3 0.5 0.7 -1.3 -1.7 -1.5 -2.2 -11.8 -2.2 -39.2 l0.0 -36.9 -96.6 -0.5 -96.8 -0.5 -8.3 -3.8 c-11.3 -5.1 -22.9 -17.1 -28.1 -28.7 l-4.3 -9.5 0.3 -186.6 0.5 -186.4 4.8 -8.8 c6.1 -11.0 15.3 -19.3 27.4 -25.1 l9.3 -4.3 210.0 0.0 210.0 0.0 9.3 4.3 c12.1 5.8 21.2 14.1 27.4 25.1 l4.8 8.8 0.5 186.4 0.3 186.6 -4.3 9.5 c-5.1 11.6 -16.8 23.6 -28.1 28.7 l-8.3 3.8 -96.6 0.5 -96.8 0.5 0.0 36.9 c0.0 27.4 -0.5 37.7 -2.0 39.2 -1.8 1.8 -1.7 2.2 0.5 1.3 6.6 -2.3 23.1 13.3 28.2 26.9 6.6 17.8 1.2 41.3 -12.3 52.6 -12.9 10.8 -34.0 15.3 -48.1 10.0z m-69.7 -305.6 c17.1 -5.0 28.6 -17.9 32.4 -35.9 3.8 -18.3 -6.5 -38.2 -24.4 -47.1 -25.9 -12.9 -55.0 0.3 -63.3 28.7 -2.3 7.8 -2.5 11.0 -1.0 18.4 3.7 17.6 14.1 29.6 30.7 35.2 10.6 3.8 14.9 3.8 25.6 0.7z m194.2 0.0 c17.1 -5.0 28.6 -17.9 32.4 -35.9 3.8 -18.3 -6.5 -38.2 -24.4 -47.1 -22.6 -11.3 -47.5 -3.3 -59.8 19.4 -7.0 12.6 -7.0 26.9 0.0 40.3 5.8 11.5 13.9 18.4 26.1 22.6 10.8 3.8 14.9 3.8 25.7 0.7z M124.5 456.7 c-14.4 -4.5 -28.9 -17.3 -35.4 -31.4 -3.5 -7.5 -3.7 -10.0 -3.7 -60.9 l0.0 -53.1 4.3 -9.3 c6.0 -12.8 14.9 -22.1 26.1 -27.6 8.6 -4.0 11.6 -4.5 32.4 -5.1 l22.7 -0.7 0.0 94.8 0.0 94.8 -21.1 -0.2 c-11.8 0.0 -23.1 -0.7 -25.4 -1.3z M679.0 363.4 l0.0 -94.8 22.9 0.7 c18.6 0.5 24.2 1.3 30.5 4.2 11.5 5.1 21.7 15.6 27.2 27.6 l4.8 10.3 0.0 53.1 0.0 53.1 -4.6 9.5 c-6.1 12.5 -19.6 24.7 -31.0 28.4 -6.3 2.0 -14.4 2.8 -29.2 2.8 l-20.6 0.0 0.0 -94.8z", 1000),
+    "mask":    ("M8.575 3.085 C9.977 3.051 12.629 2.773 14.122 1.953 C14.417 1.791 14.909 2.005 14.911 2.341 C14.946 6.644 14.994 12.710 10.105 14.781 C9.618 14.987 9.097 15.094 8.575 15.102 L8.575 12.106 C10.752 12.088 12.104 11.111 12.560 10.499 C12.753 10.241 12.699 9.875 12.441 9.682 C12.182 9.490 11.816 9.543 11.624 9.802 C11.405 10.095 10.412 10.920 8.575 10.938 L8.575 3.085 Z M8.575 3.085 C8.545 3.086 8.515 3.086 8.486 3.086 C7.101 3.059 4.393 2.785 2.878 1.953 C2.583 1.791 2.091 2.005 2.089 2.341 C2.054 6.644 2.006 12.710 6.895 14.781 C7.429 15.007 8.003 15.114 8.575 15.101 L8.575 12.105 C8.545 12.106 8.516 12.106 8.486 12.106 C6.273 12.106 4.900 11.117 4.440 10.499 C4.247 10.241 4.301 9.875 4.559 9.682 C4.818 9.490 5.184 9.543 5.376 9.802 C5.597 10.099 6.610 10.939 8.486 10.939 C8.516 10.939 8.545 10.938 8.575 10.938 L8.575 3.085 Z M12.910 6.608 C12.947 6.241 12.568 6.024 12.212 6.119 L11.083 6.422 L9.954 6.724 C9.598 6.819 9.379 7.197 9.594 7.496 C9.605 7.511 9.616 7.525 9.627 7.539 C9.773 7.731 9.956 7.891 10.165 8.012 C10.374 8.132 10.605 8.210 10.844 8.242 C11.083 8.273 11.326 8.257 11.558 8.195 C11.791 8.133 12.010 8.025 12.201 7.878 C12.392 7.731 12.553 7.548 12.673 7.340 C12.794 7.131 12.872 6.900 12.903 6.661 C12.906 6.643 12.908 6.626 12.910 6.608 Z M7.576 7.553 C7.632 7.917 7.265 8.154 6.905 8.077 L5.761 7.834 L4.618 7.591 C4.258 7.515 4.019 7.149 4.218 6.839 C4.228 6.824 4.238 6.809 4.248 6.794 C4.385 6.596 4.559 6.426 4.761 6.295 C4.964 6.163 5.190 6.073 5.427 6.029 C5.664 5.985 5.907 5.988 6.143 6.039 C6.379 6.089 6.602 6.185 6.801 6.321 C7.000 6.458 7.170 6.632 7.301 6.834 C7.432 7.037 7.523 7.263 7.566 7.500 C7.570 7.518 7.573 7.535 7.576 7.553 Z", 17),
 }
 
 def icon_svg(name, size=13, color="currentColor"):
     d, adv = GLYPHS[name]
+    if name == "mask":
+        return (f'<svg width="{size}" height="{size}" viewBox="0 0 17 17" '
+                f'xmlns="http://www.w3.org/2000/svg" style="display:inline-block;vertical-align:middle;flex-shrink:0">'
+                f'<path d="{d}" fill="{color}" fill-rule="evenodd" clip-rule="evenodd"/></svg>')
     w = adv * size / 1000
     return (f'<svg width="{w:.1f}" height="{size}" viewBox="0 0 {adv} 1000" '
             f'xmlns="http://www.w3.org/2000/svg" style="display:inline-block;vertical-align:middle;flex-shrink:0">'
@@ -966,6 +984,18 @@ def verified_svg(verified_type, is_blue):
             f'<circle cx="9" cy="9" r="9" fill="{fill}"/>'
             f'<polyline points="4.5,10 7.5,13 13.5,7" stroke="{stroke}" stroke-width="2.2" '
             f'fill="none" stroke-linecap="round" stroke-linejoin="round"/></svg>')
+
+def parody_label_html(label):
+    """Return a small grey theatre-mask + label row for Parody/Commentary/Fan accounts."""
+    if not label or str(label).strip().lower() in {"none", "null"}:
+        return ""
+    return (
+        f'<div class="parody-label" style="display:inline-flex;align-items:center;gap:3px;'
+        f'color:var(--grey);font-size:12px;line-height:1;margin-top:1px;">'
+        f'{icon_svg("mask", 12, "var(--grey)")}'
+        f'<span>{label} account</span>'
+        f'</div>'
+    )
 
 NITTER_CSS = """
 body {
@@ -1039,8 +1069,8 @@ SHARED_CSS = """
 .thread-line { width: 2px; flex: 1; min-height: 6px; background: var(--acc); margin: 3px 0; }
 .right-col { flex: 1; overflow: hidden; padding-bottom: 12px; }
 .tweet-row:last-child .right-col { padding-bottom: 0; }
-.tweet-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 1px; }
-.tweet-header-left { display: flex; align-items: center; flex-wrap: wrap; flex: 1; overflow: hidden; }
+.tweet-header { display: flex; align-items: flex-start; justify-content: space-between; margin-bottom: 1px; }
+.tweet-header-left { display: flex; flex-direction: column; align-items: flex-start; flex: 1; overflow: hidden; }
 .tweet-header-left > * { margin-right: 0; }
 .fullname { font-weight: 700; font-size: 15px; white-space: nowrap; }
 .username { color: var(--accent); font-size: 14px; white-space: nowrap; padding-left: 4px; }
@@ -1105,6 +1135,7 @@ SHARED_CSS = """
 .focal-header-names { display: flex; flex-direction: column; justify-content: center; line-height: 1.25; }
 .focal-header-top { display: flex; align-items: center; gap: 3px; }
 .focal-header-top .fullname { font-size: 15px; font-weight: 700; }
+.focal-header-bottom { display: flex; flex-direction: column; align-items: flex-start; }
 .focal-header-bottom .username { color: var(--accent); font-size: 14px; padding-left: 0; }
 .focal-body { padding: 0 14px 14px; }
 .rt-header { display: flex; align-items: center; color: var(--grey); font-size: 13px; font-weight: 700; padding: 8px 14px 0 53px; gap: 5px; }
@@ -1400,6 +1431,7 @@ def tweet_row_html(t, is_parent=False, no_source=False):
 </div>"""
     u      = t["user"]
     vicon  = verified_svg(u["verified_type"], u["is_blue_verified"])
+    plabel = parody_label_html(u.get("parody_label", ""))
     grey   = "var(--grey)"
 
     clean_text, reply_to_sns = strip_all_lead_mentions(t["full_text"], t["entities"])
@@ -1498,7 +1530,7 @@ def tweet_row_html(t, is_parent=False, no_source=False):
   <div class="right-col">
     <div class="tweet-header">
       <div class="tweet-header-left">
-        <span class="fullname">{u["name"]}</span>{vicon}<span class="username">@{u["screen_name"]}</span>
+        <div style="display:flex;align-items:center;"><span class="fullname">{u["name"]}</span>{vicon}<span class="username">@{u["screen_name"]}</span></div>{plabel}
       </div>
       <span class="tweet-time">{time_str}</span>
     </div>
@@ -1520,7 +1552,7 @@ def tweet_row_html(t, is_parent=False, no_source=False):
     <img class="avatar" src="{u["avatar_url"]}">
     <div class="focal-header-names">
       <div class="focal-header-top"><span class="fullname">{u["name"]}</span>{vicon}</div>
-      <div class="focal-header-bottom"><span class="username">@{u["screen_name"]}</span></div>
+      <div class="focal-header-bottom"><span class="username">@{u["screen_name"]}</span>{plabel}</div>
     </div>
     <span class="tweet-time" style="margin-left:auto">{time_str}</span>
   </div>
