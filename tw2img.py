@@ -1111,7 +1111,7 @@ SHARED_CSS = """
 .attr-avatar { width: 24px; height: 24px; border-radius: 50%; display: block; flex-shrink: 0; }
 .attr-name { font-size: 14px; font-weight: 700; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .quote-block { border: 1px solid var(--border); border-radius: 10px; padding: 10px 12px; margin: 6px 0; background: var(--qt-bg); overflow: hidden; }
-.quote-header { display: flex; align-items: center; flex-wrap: wrap; margin-bottom: 4px; }
+.quote-header { display: flex; align-items: center; flex-wrap: wrap; margin-bottom: 4px; line-height: 1; }
 .quote-header > * { margin-right: 4px; }
 .quote-avatar { width: 20px; height: 20px; border-radius: 10px; display: inline-block; }
 .quote-name { font-weight: 700; font-size: 14px; margin-right: 0; }
