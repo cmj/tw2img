@@ -887,7 +887,10 @@ def _attribution_html(attr):
     return (
         f'<div class="media-attribution" style="display: flex; align-items: center; margin-top: 2px; margin-bottom: 8px; font-size: 13px; color: var(--grey); gap: 4px; font-family: -apple-system, BlinkMacSystemFont, sans-serif;">'
         f'<img class="attr-avatar" src="{avatar}" style="width: 16px; height: 16px; border-radius: 50%; object-fit: cover; display: inline-block; vertical-align: middle;">'
-        f'<span>From </span><strong class="attr-name" style="color: var(--fg); font-weight: 700; margin-left: 1px; margin-right: 1px;">{attr["name"]}</strong>{vicon}'
+        f'<span>From </span><span style="display:inline-flex;align-items:center;margin-top:2px;">'
+        f'<strong class="attr-name" style="color: var(--fg); font-weight: 700;">{attr["name"]}</strong>'
+        f'{vicon.replace("margin:0 0 2px 4px", "margin:2px 0 0 4px")}'
+        f'</span>'
         f'</div>'
     )
 
@@ -980,7 +983,7 @@ def verified_svg(verified_type, is_blue):
     elif verified_type == "Government": fill, stroke = "#829aab", "black"    
     else: return ""
     return (f'<svg width="12" height="12" viewBox="0 0 18 18" xmlns="http://www.w3.org/2000/svg" '
-            f'style="display:inline-block;vertical-align:middle;margin:0 0 4px 4px">'
+            f'style="display:inline-block;vertical-align:middle;margin:0 0 2px 4px">'
             f'<circle cx="9" cy="9" r="9" fill="{fill}"/>'
             f'<polyline points="4.5,10 7.5,13 13.5,7" stroke="{stroke}" stroke-width="2.2" '
             f'fill="none" stroke-linecap="round" stroke-linejoin="round"/></svg>')
@@ -1133,7 +1136,7 @@ SHARED_CSS = """
 .focal-header { display: flex; align-items: center; padding: 0 14px 8px; gap: 12px; }
 .focal-header .avatar { width: 46px; height: 46px; border-radius: 23px; flex-shrink: 0; }
 .focal-header-names { display: flex; flex-direction: column; justify-content: center; line-height: 1.25; }
-.focal-header-top { display: flex; align-items: center; gap: 3px; }
+.focal-header-top { display: flex; align-items: center; gap: 0; }
 .focal-header-top .fullname { font-size: 15px; font-weight: 700; }
 .focal-header-bottom { display: flex; flex-direction: column; align-items: flex-start; }
 .focal-header-bottom .username { color: var(--accent); font-size: 14px; padding-left: 0; }

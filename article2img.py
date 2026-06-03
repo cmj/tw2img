@@ -912,7 +912,7 @@ def icon_svg(name, size=14, color="currentColor"):
 def verified_svg(is_blue):
     if not is_blue: return ""
     return ('<svg width="16" height="16" viewBox="0 0 18 18" xmlns="http://www.w3.org/2000/svg" '
-            'style="display:inline-block;vertical-align:middle;margin:0 1px 2px">'
+            'style="display:inline-block;vertical-align:middle;margin:0 0 0 4px">'
             '<circle cx="9" cy="9" r="9" fill="#1d9bf0"/>'
             '<polyline points="4.5,10 7.5,13 13.5,7" stroke="white" stroke-width="2.2" '
             'fill="none" stroke-linecap="round" stroke-linejoin="round"/></svg>')
@@ -1059,7 +1059,8 @@ a { color: var(--link); text-decoration: none; }
 .byline-name-row {
     display: flex;
     align-items: center;
-    gap: 3px;
+    gap: 0;
+    line-height: 1;
     font-size: 14px;
     font-weight: 700;
     color: var(--fg);
@@ -1186,10 +1187,11 @@ a { color: var(--link); text-decoration: none; }
 .tweet-embed-name {
     font-size: 14px;
     font-weight: 700;
+    line-height: 1;
     color: var(--fg);
     display: flex;
     align-items: center;
-    gap: 3px;
+    gap: 0;
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
@@ -1354,7 +1356,7 @@ def build_article_html(article, light=False, width=680, standalone=False, tweet_
       <img class="byline-avatar" src="{author['avatar_url']}" alt="">
       <div class="byline-info">
         <div class="byline-name-row">
-          <span>{_escape(author['name'])}</span>{tick}
+          {_escape(author['name'])}{tick}
         </div>
         <div class="byline-meta">@{_escape(author['screen_name'])} · {followers_str}</div>
       </div>
