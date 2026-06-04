@@ -1769,6 +1769,8 @@ async def _main():
                         "Use {} as a placeholder for the filename, e.g. 'kitty +icat {}'. "
                         "If omitted the filename is appended automatically. "
                         "Examples: viewnior  |  eog  |  'kitty +icat {}'  |  firefox")
+    p.add_argument("-q", "--quiet", action="store_true", default=_b("quiet"),
+                   help="Suppress all progress messages (stderr and status prints).")
     args = p.parse_args()
 
     # --view-html is shorthand for: auto-save HTML next to the PNG, then open in browser.
@@ -1882,7 +1884,8 @@ async def _main():
             else:
                 effective_src = src_lang if src_lang != "auto" else (tweet_lang or "auto")
                 if t.get("full_text"):
-                    print(f"Translating tweet text ({effective_src} -> {tgt_lang}) ...", file=sys.stderr)
+                    if not args.quiet:
+                        print(f"Translating tweet text ({effective_src} -> {tgt_lang}) ...", file=sys.stderr)
                     t["full_text"] = translate_text(t["full_text"], effective_src, tgt_lang)
                     t["translated_from"] = _lang_display_name(effective_src)
             qt = t.get("quoted")
@@ -1892,7 +1895,8 @@ async def _main():
                     pass  # untranslatable Twitter-specific lang code; skip
                 elif not qt_lang or qt_lang != tgt_primary:
                     qt_src = src_lang if src_lang != "auto" else (qt_lang or "auto")
-                    print(f"Translating quoted tweet text ({qt_src} -> {tgt_lang}) ...", file=sys.stderr)
+                    if not args.quiet:
+                        print(f"Translating quoted tweet text ({qt_src} -> {tgt_lang}) ...", file=sys.stderr)
                     qt["full_text"] = translate_text(qt["full_text"], qt_src, tgt_lang)
                     qt["translated_from"] = _lang_display_name(qt_src)
 
@@ -1935,7 +1939,8 @@ async def _main():
             html_path = args.save_html
         with open(html_path, 'w', encoding='utf-8') as f:
             f.write(html)
-        print(f"HTML saved to {html_path}")
+        if not args.quiet:
+            print(f"HTML saved to {html_path}")
         if args.view:
             viewer = args.viewer or "firefox"
             open_with_viewer(html_path, viewer)
@@ -1948,7 +1953,8 @@ async def _main():
         html_path = str(Path(output).with_suffix(".html"))
         with open(html_path, 'w', encoding='utf-8') as f:
             f.write(html)
-        print(f"HTML saved to {html_path}")
+        if not args.quiet:
+            print(f"HTML saved to {html_path}")
         browser_viewer = args.viewer or "xdg-open"
         open_with_viewer(html_path, browser_viewer)
         png_needed = args.output or args.view or args.imgur
@@ -1960,13 +1966,15 @@ async def _main():
         return
 
     await render_png(html, output, width=args.width, retina=not args.no_retina)
-    print(f"{output} saved")
+    if not args.quiet:
+        print(f"{output} saved")
     if args.view:
         viewer = args.viewer or "viewnior"
         open_with_viewer(output, viewer)
     if args.imgur:
         url, delete_hash = upload_imgur(output)
-        print(f"{url} delete: https://imgur.com/delete/{delete_hash}")
+        if not args.quiet:
+            print(f"{url} delete: https://imgur.com/delete/{delete_hash}")
         if args.imgur_log:
             log_path = os.path.expanduser(args.imgur_log)
             with open(log_path, "a") as f:
