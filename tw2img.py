@@ -579,24 +579,52 @@ def _parse_tweet_result(result, user_parser):
     grok_question = grok_items[0].get("message", "") if len(grok_items) > 0 else ""
     grok_answer   = grok_items[1].get("message", "") if len(grok_items) > 1 else ""
 
-    # Fallback: unified_card grok_share format (card.legacy.binding_values[unified_card])
-    if not grok_answer and raw_card:
+    # Fallback: unified_card grok_share / image_website / video_website
+    if raw_card:
         uc_str = bv.get("unified_card", {}).get("string_value", "")
         if uc_str:
             try:
                 uc = json.loads(uc_str)
-                for comp in uc.get("component_objects", {}).values():
-                    if comp.get("type") == "grok_share":
-                        preview = comp.get("data", {}).get("conversation_preview", [])
-                        for item in preview:
-                            sender = item.get("sender", "")
-                            msg    = item.get("message", "")
-                            if sender == "USER" and not grok_question:
-                                grok_question = msg
-                            elif sender == "AGENT" and not grok_answer:
-                                grok_answer = msg
-                        break
-            except (json.JSONDecodeError, AttributeError):
+                uc_type = uc.get("type", "")
+                comps = uc.get("component_objects", {})
+                media_ents = uc.get("media_entities", {})
+
+                if not grok_answer:
+                    for comp in comps.values():
+                        if comp.get("type") == "grok_share":
+                            preview = comp.get("data", {}).get("conversation_preview", [])
+                            for item in preview:
+                                sender = item.get("sender", "")
+                                msg    = item.get("message", "")
+                                if sender == "USER" and not grok_question:
+                                    grok_question = msg
+                                elif sender == "AGENT" and not grok_answer:
+                                    grok_answer = msg
+                            break
+
+                if not card and uc_type in ("image_website", "video_website") and not card:
+                    details = next((c["data"] for c in comps.values() if c.get("type") == "details"), {})
+                    uc_title  = details.get("title", {}).get("content", "")
+                    uc_domain = details.get("subtitle", {}).get("content", "")
+                    dest_key = details.get("destination", "")
+                    dests = uc.get("destination_objects", {})
+                    uc_url = (dests.get(dest_key) or next(iter(dests.values()), {})).get("data", {}).get("url_data", {}).get("url", "")
+                    media_id_key = next((c["data"].get("id") for c in comps.values() if c.get("type") == "media"), None)
+                    uc_media = media_ents.get(media_id_key, {}) if media_id_key else {}
+                    uc_img = uc_media.get("media_url_https", "")
+                    uc_mtype = uc_media.get("type", "photo")
+                    uc_vi = uc_media.get("video_info", {})
+                    card = {
+                        "title":    uc_title,
+                        "desc":     "",
+                        "domain":   uc_domain,
+                        "url":      uc_url,
+                        "img_url":  uc_img,
+                        "is_player": uc_mtype in ("video", "animated_gif"),
+                        "uc_media": uc_media,
+                        "uc_type":  uc_type,
+                    }
+            except (json.JSONDecodeError, AttributeError, StopIteration):
                 pass
 
     return {
@@ -886,8 +914,9 @@ def _attribution_html(attr):
     avatar = attr["avatar_url"]
     return (
         f'<div class="media-attribution" style="display: flex; align-items: center; margin-top: 2px; margin-bottom: 8px; font-size: 13px; color: var(--grey); gap: 4px; font-family: -apple-system, BlinkMacSystemFont, sans-serif;">'
+        f'<span>From </span>'
         f'<img class="attr-avatar" src="{avatar}" style="width: 16px; height: 16px; border-radius: 50%; object-fit: cover; display: inline-block; vertical-align: middle;">'
-        f'<span>From </span><span style="display:inline-flex;align-items:center;margin-top:2px;">'
+        f'<span style="display:inline-flex;align-items:center;margin-top:2px;">'
         f'<strong class="attr-name" style="color: var(--fg); font-weight: 700;">{attr["name"]}</strong>'
         f'{vicon.replace("margin:0 0 2px 4px", "margin:2px 0 0 4px")}'
         f'</span>'
@@ -1447,6 +1476,51 @@ def grok_card_html(question, answer):
 
 def card_html(card):
     if not card: return ""
+
+    # unified_card image_website / video_website — full-width media + title bar
+    if card.get("uc_type") in ("image_website", "video_website"):
+        uc_media = card.get("uc_media", {})
+        oi = uc_media.get("original_info", {})
+        w, h = oi.get("width", 0), oi.get("height", 0)
+        ar = (w / h) if w and h else 1.0
+        # Portrait images: center with side bars; landscape: full width
+        if ar < 0.9:
+            # portrait — cap render width so it doesn't stretch full card width
+            max_w = round(ar * 400)  # at 400px tall
+            media_style = f'display:flex;justify-content:center;align-items:stretch;background:#000;'
+            inner_style = f'width:{max_w}px;flex-shrink:0;'
+        else:
+            media_style = ''
+            inner_style = 'width:100%;'
+        if card.get("is_player"):
+            vi = uc_media.get("video_info", {})
+            dur_ms = vi.get("duration_millis", 0)
+            dur_label = _fmt_duration(dur_ms) if dur_ms else ""
+            dur_html = f'<div class="vid-duration">{dur_label}</div>' if dur_label else ""
+            media_html_inner = (
+                f'<div class="video-wrap" style="margin:0;border-radius:0;{inner_style}">'
+                f'<img src="{card["img_url"]}" style="width:100%;height:100%;object-fit:cover;display:block;">'
+                f'<div class="play-overlay">{PLAY_SVG}</div>'
+                f'{dur_html}'
+                f'</div>'
+            )
+        else:
+            media_html_inner = (
+                f'<div style="{inner_style}overflow:hidden;max-height:420px;">'
+                f'<img src="{card["img_url"]}" style="width:100%;height:100%;max-height:420px;object-fit:cover;display:block;">'
+                f'</div>'
+            )
+        media_wrap = f'<div style="{media_style}max-height:420px;overflow:hidden;">{media_html_inner}</div>' if media_style else media_html_inner
+        return (
+            f'<a href="{card["url"]}" class="card" style="display:block;overflow:hidden;">'
+            f'{media_wrap}'
+            f'<div class="card-body">'
+            f'<div class="card-domain">{card["domain"]}</div>'
+            f'<div class="card-title">{card["title"]}</div>'
+            f'</div>'
+            f'</a>'
+        )
+
     if card.get("is_player") and card.get("img_url"):
         return f'''<a href="{card["url"]}" class="card" style="position:relative;display:block;">
   <div class="attachment video-wrap" style="margin:0;border-radius:0;">
@@ -1467,6 +1541,7 @@ def card_html(card):
     <div class="card-desc">{card["desc"]}</div>
   </div>
 </a>'''
+
 
 def tweet_row_html(t, is_parent=False, no_source=False):
     if t.get("__tombstone"):
