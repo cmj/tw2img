@@ -894,13 +894,30 @@ def _attribution_html(attr):
         f'</div>'
     )
 
+def _aspect(m):
+    """Return width/height aspect ratio for a media item, falling back to 1.0."""
+    oi = m.get("original_info", {})
+    w, h = oi.get("width", 0), oi.get("height", 0)
+    if w and h:
+        return w / h
+    lg = m.get("sizes", {}).get("large", {})
+    w2, h2 = lg.get("w", 0), lg.get("h", 0)
+    return (w2 / h2) if w2 and h2 else 1.0
+
+def _ar_cols(aspects):
+    """Convert aspect ratios to CSS grid-template-columns (fr units)."""
+    total = sum(aspects)
+    return " ".join(f"{a/total:.4f}fr" for a in aspects)
+
 def media_html(ext_entities, is_ai=False):
     media_list = ext_entities.get("media", [])
     if not media_list:
         return ""
 
     parts = []
+    aspects = []
     for m in media_list:
+        aspects.append(_aspect(m))
         if m["type"] == "photo":
             parts.append(f'<div class="attachment"><img src="{m["media_url_https"]}"></div>')
         elif m["type"] in ("video", "animated_gif"):
@@ -925,35 +942,60 @@ def media_html(ext_entities, is_ai=False):
         '</div>'
     ) if is_ai else ""
 
-    if len(parts) == 5:
-        grid = f'''<div class="media-grid-5">
-            <div class="row-top">
-                <div class="grid-item">{parts[0]}</div>
-                <div class="grid-item">{parts[1]}</div>
-            </div>
-            <div class="row-bottom">
-                <div class="grid-item">{parts[2]}</div>
-                <div class="grid-item">{parts[3]}</div>
-                <div class="grid-item">{parts[4]}</div>
-            </div>
-        </div>'''
-    elif len(parts) == 4:
-        grid = f'''<div class="media-grid-2x2">
-            <div class="grid-item">{parts[0]}</div>
-            <div class="grid-item">{parts[1]}</div>
-            <div class="grid-item">{parts[2]}</div>
-            <div class="grid-item">{parts[3]}</div>
-        </div>'''
-    elif len(parts) == 3:
-        grid = f'''<div class="media-grid-3">
-            <div class="grid-item">{parts[0]}</div>
-            <div class="grid-item">{parts[1]}</div>
-            <div class="grid-item span-2">{parts[2]}</div>
-        </div>'''
+    n = len(parts)
+    if n == 5:
+        top_cols = _ar_cols(aspects[0:2])
+        bot_cols = _ar_cols(aspects[2:5])
+        grid = (
+            f'<div class="media-grid-5">'
+            f'<div class="row-top" style="grid-template-columns:{top_cols}">'
+            f'<div class="grid-item">{parts[0]}</div>'
+            f'<div class="grid-item">{parts[1]}</div>'
+            f'</div>'
+            f'<div class="row-bottom" style="grid-template-columns:{bot_cols}">'
+            f'<div class="grid-item">{parts[2]}</div>'
+            f'<div class="grid-item">{parts[3]}</div>'
+            f'<div class="grid-item">{parts[4]}</div>'
+            f'</div></div>'
+        )
+    elif n == 4:
+        top_cols = _ar_cols(aspects[0:2])
+        bot_cols = _ar_cols(aspects[2:4])
+        grid = (
+            f'<div class="media-grid-2x2">'
+            f'<div class="media-grid-row" style="display:grid;grid-template-columns:{top_cols};gap:3px;">'
+            f'<div class="grid-item">{parts[0]}</div>'
+            f'<div class="grid-item">{parts[1]}</div>'
+            f'</div>'
+            f'<div class="media-grid-row" style="display:grid;grid-template-columns:{bot_cols};gap:3px;">'
+            f'<div class="grid-item">{parts[2]}</div>'
+            f'<div class="grid-item">{parts[3]}</div>'
+            f'</div></div>'
+        )
+    elif n == 3:
+        top_cols = _ar_cols(aspects[0:2])
+        grid = (
+            f'<div class="media-grid-3">'
+            f'<div class="media-grid-row" style="display:grid;grid-template-columns:{top_cols};gap:3px;">'
+            f'<div class="grid-item">{parts[0]}</div>'
+            f'<div class="grid-item">{parts[1]}</div>'
+            f'</div>'
+            f'<div class="grid-item">{parts[2]}</div>'
+            f'</div>'
+        )
+    elif n == 2:
+        cols = _ar_cols(aspects)
+        grid = (
+            f'<div class="media-row" style="grid-template-columns:{cols}">'
+            f'{"".join(parts)}'
+            f'</div>'
+        )
     else:
-        grid = f'<div class="media-row">{"".join(parts)}</div>'
+        # Single image: let it define its own height naturally
+        grid = f'<div class="media-row single-image">{"".join(parts)}</div>'
 
     return grid + ai_label
+
 
 GLYPHS = {
     "comment": ("M1000 350q0-97-67-179t-182-130-251-48q-39 0-81 4-110-97-257-135-27-8-63-12-10-1-17 5t-10 16v1q-2 2 0 6t1 6 2 5l4 5t4 5 4 5q4 5 17 19t20 22 17 22 18 28 15 33 15 42q-88 50-138 123t-51 157q0 73 40 139t109 115 163 76 197 28q135 0 251-48t182-130 67-179z", 1000),
@@ -1086,22 +1128,22 @@ SHARED_CSS = """
 .stat { white-space: nowrap; margin-right: 10px; }
 .stat svg { margin: 3px 1px 5px 0; }
 .source { margin-left: auto; font-size: 12px; }
-.media-row { display: flex; margin: 6px 0; border-radius: 10px; overflow: hidden; }
-.media-row .attachment { flex: 1; }
-.media-row .attachment + .attachment { margin-left: 3px; }
-.media-grid-2x2 { display: grid; grid-template-columns: 1fr 1fr; gap: 0; margin: 6px 0; border-radius: 10px; overflow: hidden; }
+.media-row { display: grid; margin: 6px 0; border-radius: 10px; overflow: hidden; gap: 3px; }
+.media-row .attachment { min-height: 0; overflow: hidden; }
+.media-row .attachment img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.media-row.single-image .attachment img { height: auto; max-height: 510px; object-fit: contain; }
+.media-grid-2x2 { display: flex; flex-direction: column; gap: 3px; margin: 6px 0; border-radius: 10px; overflow: hidden; }
 .media-grid-2x2 .grid-item { position: relative; overflow: hidden; }
-.media-grid-2x2 .grid-item img { width: 100%; height: 100%; object-fit: cover; }
+.media-grid-2x2 .grid-item img { width: 100%; height: 100%; object-fit: cover; display: block; }
 
-.media-grid-3 { display: grid; grid-template-columns: 1fr 1fr; gap: 0; margin: 6px 0; border-radius: 10px; overflow: hidden; }
+.media-grid-3 { display: flex; flex-direction: column; gap: 3px; margin: 6px 0; border-radius: 10px; overflow: hidden; }
 .media-grid-3 .grid-item { position: relative; overflow: hidden; }
-.media-grid-3 .grid-item img { width: 100%; height: 100%; object-fit: cover; }
-.media-grid-3 .span-2 { grid-column: 1 / span 2; }
-.media-grid-5 { display: grid; grid-template-columns: 1fr 1fr; gap: 3px; margin: 6px 0; border-radius: 10px; overflow: hidden; }
+.media-grid-3 .grid-item img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.media-grid-5 { display: flex; flex-direction: column; gap: 3px; margin: 6px 0; border-radius: 10px; overflow: hidden; }
 .media-grid-5 .grid-item { position: relative; overflow: hidden; }
 .media-grid-5 .grid-item img { width: 100%; height: 100%; object-fit: cover; display: block; }
-.media-grid-5 .row-top { grid-column: 1 / span 2; display: grid; grid-template-columns: 1fr 1fr; gap: 3px; }
-.media-grid-5 .row-bottom { grid-column: 1 / span 2; display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 3px; }
+.media-grid-5 .row-top { display: grid; gap: 3px; }
+.media-grid-5 .row-bottom { display: grid; gap: 3px; }
 .attachment img { width: 100%; display: block; }
 .video-wrap { position: relative; max-height: 510px; overflow: hidden; display: flex; justify-content: center; background: #000; }
 .video-wrap img { width: auto; height: auto; max-width: 100%; max-height: 510px; object-fit: contain; display: block; }
@@ -1110,7 +1152,8 @@ SHARED_CSS = """
 .media-attribution { display: flex; align-items: center; gap: 6px; margin: 6px 0 4px; }
 .attr-avatar { width: 24px; height: 24px; border-radius: 50%; display: block; flex-shrink: 0; }
 .attr-name { font-size: 14px; font-weight: 700; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.quote-block { border: 1px solid var(--border); border-radius: 10px; padding: 10px 12px; margin: 6px 0; background: var(--qt-bg); overflow: hidden; }
+.quote-block { border: 1px solid var(--border); border-radius: 10px; padding: 10px 12px 10px; margin: 6px 0; background: var(--qt-bg); overflow: hidden; }
+.quote-block.has-media { padding-bottom: 0; }
 .quote-header { display: flex; align-items: center; flex-wrap: wrap; margin-bottom: 4px; line-height: 1; }
 .quote-header > * { margin-right: 4px; }
 .quote-avatar { width: 20px; height: 20px; border-radius: 10px; display: inline-block; }
@@ -1118,10 +1161,13 @@ SHARED_CSS = """
 .quote-sn { color: var(--accent); font-size: 13px; padding-left: 4px; }
 .quote-time { color: var(--grey); font-size: 13px; margin-left: auto; }
 .quote-text { font-size: 14px; line-height: 1.45; white-space: pre-wrap; word-wrap: break-word; }
-.quote-media { margin-top: 6px; border-radius: 8px; overflow: hidden; }
-.quote-media img { width: 100%; display: block; }
+.quote-media { margin: 6px -12px 0; overflow: hidden; border-radius: 0 0 10px 10px; }
+.quote-media > img { width: 100%; display: block; }
 .quote-media .video-wrap { max-height: 400px; background: #000; }
 .quote-media .video-wrap img { width: auto; height: auto; max-width: 100%; max-height: 400px; object-fit: contain; }
+.quote-media .media-row { margin: 0; border-radius: 0; }
+.quote-media .media-grid-2x2 { margin: 0; border-radius: 0; }
+.quote-media .media-grid-3 { margin: 0; border-radius: 0; }
 .birdwatch { border: 1px solid var(--border); border-radius: 10px; margin: 6px 0; background: var(--bw-bg); overflow: hidden; }
 .community-note-header { background-color: var(--bg-hover); font-weight: 700; font-size: 13px; padding: 6px 10px 8px; display: flex; align-items: center; gap: 12px; color: var(--fg); }
 .community-note-header .icon-container { flex-shrink: 0; color: var(--accent); }
@@ -1235,23 +1281,27 @@ def quote_block_html(qt):
     media = ""
     mlist = qt["ext_entities"].get("media", [])
     if mlist:
-        m = mlist[0]
-        if m["type"] in ("video", "animated_gif"):
-            vi = m.get("video_info", {})
-            dur_ms = vi.get("duration_millis", 0)
-            dur_label = _fmt_duration(dur_ms) if m["type"] == "video" else ""
-            dur_html = f'<div class="vid-duration">{dur_label}</div>' if dur_label else ""
-            media = (
-                f'<div class="quote-media">'
-                f'<div class="video-wrap">'
-                f'<img src="{m["media_url_https"]}">'
-                f'<div class="play-overlay">{PLAY_SVG}</div>'
-                f'{dur_html}'
-                f'</div></div>'
-            )
+        if len(mlist) == 1:
+            m = mlist[0]
+            if m["type"] in ("video", "animated_gif"):
+                vi = m.get("video_info", {})
+                dur_ms = vi.get("duration_millis", 0)
+                dur_label = _fmt_duration(dur_ms) if m["type"] == "video" else ""
+                dur_html = f'<div class="vid-duration">{dur_label}</div>' if dur_label else ""
+                media = (
+                    f'<div class="quote-media">'
+                    f'<div class="video-wrap">'
+                    f'<img src="{m["media_url_https"]}">'
+                    f'<div class="play-overlay">{PLAY_SVG}</div>'
+                    f'{dur_html}'
+                    f'</div></div>'
+                )
+            else:
+                media = f'<div class="quote-media"><img src="{m["media_url_https"]}"></div>'
         else:
-            media = f'<div class="quote-media"><img src="{m["media_url_https"]}"></div>'
-    return f"""<div class="quote-block">
+            media = f'<div class="quote-media">{media_html(qt["ext_entities"])}</div>'
+    has_media_cls = " has-media" if media else ""
+    return f"""<div class="quote-block{has_media_cls}">
   <div class="quote-header">
     <img class="quote-avatar" src="{u["avatar_url"]}">
     <span class="quote-name">{u["name"]}</span>{vicon}
