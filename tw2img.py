@@ -1207,6 +1207,7 @@ a { color: var(--link); text-decoration: none; }
 """
 
 SHARED_CSS = """
+.thread { padding-top: 10px; }
 .tweet-row { display: flex; padding: 12px 14px 0; }
 .tweet-row:last-child { padding-bottom: 14px; }
 .left-col { display: flex; flex-direction: column; align-items: center; flex-shrink: 0; width: 46px; margin-right: 10px; }
