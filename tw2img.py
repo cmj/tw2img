@@ -1207,7 +1207,6 @@ a { color: var(--link); text-decoration: none; }
 """
 
 SHARED_CSS = """
-.thread { padding-top: 10px; }
 .tweet-row { display: flex; padding: 12px 14px 0; }
 .tweet-row:last-child { padding-bottom: 14px; }
 .left-col { display: flex; flex-direction: column; align-items: center; flex-shrink: 0; width: 46px; margin-right: 10px; }
@@ -1222,7 +1221,7 @@ SHARED_CSS = """
 .username { color: var(--accent); font-size: 14px; white-space: nowrap; padding-left: 4px; }
 .tweet-time { color: var(--accent); font-size: 14px; white-space: nowrap; flex-shrink: 0; margin-left: 8px; }
 .replying-to { color: var(--grey); font-size: 13px; margin-bottom: 3px; line-height: 1.4; }
-.tweet-content { font-size: 15px; line-height: 1.5; margin: 4px 0 0; white-space: pre-wrap; word-wrap: break-word; }
+.tweet-content { font-size: 15px; margin: 4px 0 0; white-space: pre-wrap; word-wrap: break-word; }
 .focal .tweet-content { font-size: 17px; }
 .focal .tweet-date { color: var(--grey); font-size: 13px; margin-bottom: 0; padding-top: 6px; }
 .stats { display: flex; align-items: center; color: var(--grey); font-size: 13px; padding-top: 8px; }
@@ -1261,7 +1260,7 @@ SHARED_CSS = """
 .quote-name { font-weight: 700; font-size: 14px; margin-right: 0; }
 .quote-sn { color: var(--accent); font-size: 13px; padding-left: 4px; }
 .quote-time { color: var(--grey); font-size: 13px; margin-left: auto; }
-.quote-text { font-size: 14px; line-height: 1.45; white-space: pre-wrap; word-wrap: break-word; }
+.quote-text { font-size: 14px; white-space: pre-wrap; word-wrap: break-word; }
 .quote-media { margin: 6px -12px 0; overflow: hidden; border-radius: 0 0 10px 10px; }
 .quote-media > img { width: 100%; display: block; }
 .quote-media .video-wrap { max-height: 400px; background: #000; }
@@ -1272,7 +1271,7 @@ SHARED_CSS = """
 .birdwatch { border: 1px solid var(--border); border-radius: 10px; margin: 6px 0; background: var(--bw-bg); overflow: hidden; }
 .community-note-header { background-color: var(--bg-hover); font-weight: 700; font-size: 13px; padding: 6px 10px 8px; display: flex; align-items: center; gap: 12px; color: var(--fg); }
 .community-note-header .icon-container { flex-shrink: 0; color: var(--accent); }
-.community-note-text { font-size: 13px; line-height: 1.45; color: var(--fg); white-space: pre-line; padding: 6px 10px 10px; }
+.community-note-text { font-size: 13px; color: var(--fg); white-space: pre-line; padding: 6px 10px 10px; }
 .card { border: 1px solid var(--border); border-radius: 10px; margin: 6px 0; overflow: hidden; display: flex; flex-direction: column; }
 .card-img { width: 100%; display: block; max-height: 220px; object-fit: cover; }
 .card-body { padding: 8px 12px 10px; }
