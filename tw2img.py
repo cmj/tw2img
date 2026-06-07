@@ -43,7 +43,7 @@ Config file (INI format, [tw2img] section):
       (no --view, no --imgur, no explicit output path), Playwright is not required.
 """
 
-import sys, json, re, os, argparse, asyncio, tempfile, urllib.request, urllib.parse, configparser
+import sys, json, re, os, argparse, asyncio, tempfile, urllib.request, urllib.parse, configparser, struct
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -1871,6 +1871,48 @@ html, body {{
 <div class="thread">{"".join(rows)}</div>
 </body></html>"""
 
+def embed_exif_url(output_path, url):
+    """Inject tweet URL into EXIF ImageDescription. Supports JPEG and PNG.
+    - JPEG: piexif.insert() handles it natively.
+    - PNG:  piexif.insert() only supports JPEG/WebP, so we splice an eXIf
+            chunk directly into the PNG byte stream.
+    Falls back silently if piexif is not installed or anything goes wrong."""
+    try:
+        import piexif, zlib
+    except ImportError:
+        return
+    try:
+        exif_bytes = piexif.dump({"0th": {piexif.ImageIFD.ImageDescription: url.encode("ascii", errors="replace")}})
+        ext = Path(output_path).suffix.lower()
+        if ext in (".jpg", ".jpeg"):
+            piexif.insert(exif_bytes, output_path)
+        elif ext == ".png":
+            PNG_SIG = b"\x89PNG\r\n\x1a\n"
+            with open(output_path, "rb") as f:
+                data = f.read()
+            if data[:8] != PNG_SIG:
+                return
+            chunk_type = b"eXIf"
+            chunk_crc  = struct.pack(">I", zlib.crc32(chunk_type + exif_bytes) & 0xFFFFFFFF)
+            exif_chunk = struct.pack(">I", len(exif_bytes)) + chunk_type + exif_bytes + chunk_crc
+            pos, chunks = 8, []
+            while pos < len(data):
+                length = struct.unpack(">I", data[pos:pos+4])[0]
+                chunks.append((data[pos+4:pos+8], data[pos:pos+12+length]))
+                pos += 12 + length
+            out, inserted = [PNG_SIG], False
+            for ctype, raw in chunks:
+                if ctype == b"eXIf":
+                    continue  # drop old chunk
+                out.append(raw)
+                if ctype == b"IHDR" and not inserted:
+                    out.append(exif_chunk)
+                    inserted = True
+            with open(output_path, "wb") as f:
+                f.write(b"".join(out))
+    except Exception:
+        pass  # Never fatal — EXIF is best-effort
+
 async def render_png(html, output_path, width=598, retina=True):
     try:
         from playwright.async_api import async_playwright
@@ -2169,6 +2211,8 @@ async def _main():
         return
 
     await render_png(html, output, width=args.width, retina=not args.no_retina)
+    tweet_url = f"https://x.com/{user_name}/status/{tweet_id}"
+    embed_exif_url(output, tweet_url)
     if not args.quiet:
         print(f"{output} saved")
     if args.view:
