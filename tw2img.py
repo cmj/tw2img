@@ -1222,7 +1222,7 @@ SHARED_CSS = """
 .username { color: var(--accent); font-size: 14px; white-space: nowrap; padding-left: 4px; }
 .tweet-time { color: var(--accent); font-size: 14px; white-space: nowrap; flex-shrink: 0; margin-left: 8px; }
 .replying-to { color: var(--grey); font-size: 13px; margin-bottom: 3px; line-height: 1.4; }
-.tweet-content { font-size: 15px; margin: 4px 0 0; white-space: pre-wrap; word-wrap: break-word; }
+.tweet-content { font-size: 15px; margin: 4px 0 0; line-height: 1.3em; white-space: pre-wrap; word-wrap: break-word; }
 .focal .tweet-content { font-size: 17px; }
 .focal .tweet-date { color: var(--grey); font-size: 13px; margin-bottom: 0; padding-top: 6px; }
 .stats { display: flex; align-items: center; color: var(--grey); font-size: 13px; padding-top: 8px; }
@@ -1261,7 +1261,7 @@ SHARED_CSS = """
 .quote-name { font-weight: 700; font-size: 14px; margin-right: 0; }
 .quote-sn { color: var(--accent); font-size: 13px; padding-left: 4px; }
 .quote-time { color: var(--grey); font-size: 13px; margin-left: auto; }
-.quote-text { font-size: 14px; white-space: pre-wrap; word-wrap: break-word; }
+.quote-text { font-size: 14px; line-height: 1.3em; white-space: pre-wrap; word-wrap: break-word; }
 .quote-media { margin: 6px -12px 0; overflow: hidden; border-radius: 0 0 10px 10px; }
 .quote-media > img { width: 100%; display: block; }
 .quote-media .video-wrap { max-height: 400px; background: #000; }
