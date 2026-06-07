@@ -1892,9 +1892,10 @@ def embed_exif_url(output_path, url):
                 data = f.read()
             if data[:8] != PNG_SIG:
                 return
+            tiff_bytes = exif_bytes[6:]  # strip JPEG-style "Exif\x00\x00" preamble; PNG eXIf wants raw TIFF
             chunk_type = b"eXIf"
-            chunk_crc  = struct.pack(">I", zlib.crc32(chunk_type + exif_bytes) & 0xFFFFFFFF)
-            exif_chunk = struct.pack(">I", len(exif_bytes)) + chunk_type + exif_bytes + chunk_crc
+            chunk_crc  = struct.pack(">I", zlib.crc32(chunk_type + tiff_bytes) & 0xFFFFFFFF)
+            exif_chunk = struct.pack(">I", len(tiff_bytes)) + chunk_type + tiff_bytes + chunk_crc
             pos, chunks = 8, []
             while pos < len(data):
                 length = struct.unpack(">I", data[pos:pos+4])[0]
