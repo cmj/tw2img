@@ -11,9 +11,10 @@ Usage:
     tw2img.py @username <1-20> [output.png] [options]
 
 Notes:
-    @username            implies --user; grabs the latest original tweet
-    @username 3          grabs the 3rd most-recent original tweet (skips RTs/replies)
+    @username            implies --user; grabs the latest original tweet (skips RTs/replies)
+    @username 3          grabs the 3rd most-recent tweet (skips RTs/replies)
     @username 3 out.png  same, saves to out.png
+    --with-replies       also include own replies in @user timeline (auth only, opt-in)
     --guest for no authentication, won't see conversation context
     --user <screen_name> to fetch latest tweet from user
     export TWITTER_AUTH_TOKEN=<auth_token>
@@ -71,13 +72,15 @@ def load_config(extra_path=None):
     return dict(cfg["tw2img"]) if "tw2img" in cfg else {}
 
 BEARER = "AAAAAAAAAAAAAAAAAAAAANRILgAAAAAAnNwIzUejRCOuH5E6I8xnZz4puTs%3D1Zv7ttfk8LF81IUq16cHjhLTvJu4FA33AGWWjCpTnA"
+BEARER2 = "AAAAAAAAAAAAAAAAAAAAACHguwAAAAAAaSlT0G31NDEyg%2BSnBN5JuyKjMCU%3Dlhg0gv0nE7KKyiJNEAojQbn8Y3wJm1xidDK7VnKGBP4ByJwHPb"
 UA = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
 
 TWEET_DETAIL_URL        = "https://x.com/i/api/graphql/xIYgDwjboktoFeXe_fgacw/TweetDetail"
 TWEET_RESULT_URL        = "https://api.x.com/graphql/SgZWKwvBiOKrSC0QeOGvXw/TweetResultByRestId"
-USER_BY_SCREEN_NAME_URL = "https://x.com/i/api/graphql/laYnJPCAcVo0o6pzcnlVxQ/UserByScreenName"
-USER_TWEETS_URL         = "https://x.com/i/api/graphql/fgsimYxdCfQmTI_dtJsTXw/UserTweets"
-GUEST_TOKEN_URL         = "https://api.twitter.com/1.1/guest/activate.json"
+USER_BY_SCREEN_NAME_URL        = "https://x.com/i/api/graphql/laYnJPCAcVo0o6pzcnlVxQ/UserByScreenName"
+USER_TWEETS_URL                = "https://x.com/i/api/graphql/fgsimYxdCfQmTI_dtJsTXw/UserTweets"
+USER_TWEETS_AND_REPLIES_URL    = "https://x.com/i/api/graphql/xdqXQQg4vOBF9Np6VtUsdw/UserTweetsAndReplies"
+GUEST_TOKEN_URL                = "https://api.twitter.com/1.1/guest/activate.json"
 
 TWEET_DETAIL_VARS   = lambda id: {"focalTweetId": id, "with_rux_injections": True,
     "rankingMode": "Likes", "includePromotedContent": False, "withCommunity": True,
@@ -170,6 +173,33 @@ USER_TWEETS_FEAT = {"rweb_video_screen_enabled": False, "payments_enabled": Fals
     "tweet_with_visibility_results_prefer_gql_limited_actions_policy_enabled": True,
     "longform_notetweets_rich_text_read_enabled": True, "longform_notetweets_inline_media_enabled": True,
     "responsive_web_grok_image_annotation_enabled": True, "responsive_web_enhance_cards_enabled": False}
+
+USER_TWEETS_AND_REPLIES_FEAT = {"rweb_video_screen_enabled": False, "rweb_cashtags_enabled": True,
+    "profile_label_improvements_pcf_label_in_post_enabled": True,
+    "responsive_web_profile_redirect_enabled": False, "rweb_tipjar_consumption_enabled": False,
+    "verified_phone_label_enabled": False, "creator_subscriptions_tweet_preview_api_enabled": True,
+    "responsive_web_graphql_timeline_navigation_enabled": True,
+    "responsive_web_graphql_skip_user_profile_image_extensions_enabled": False,
+    "premium_content_api_read_enabled": False, "communities_web_enable_tweet_community_results_fetch": True,
+    "c9s_tweet_anatomy_moderator_badge_enabled": True,
+    "responsive_web_grok_analyze_button_fetch_trends_enabled": False,
+    "responsive_web_grok_analyze_post_followups_enabled": True,
+    "rweb_cashtags_composer_attachment_enabled": True, "responsive_web_jetfuel_frame": True,
+    "responsive_web_grok_share_attachment_enabled": True, "responsive_web_grok_annotations_enabled": True,
+    "articles_preview_enabled": True, "responsive_web_edit_tweet_api_enabled": True,
+    "rweb_conversational_replies_downvote_enabled": False,
+    "graphql_is_translatable_rweb_tweet_is_translatable_enabled": True,
+    "view_counts_everywhere_api_enabled": True, "longform_notetweets_consumption_enabled": True,
+    "responsive_web_twitter_article_tweet_consumption_enabled": True,
+    "content_disclosure_indicator_enabled": True, "content_disclosure_ai_generated_indicator_enabled": True,
+    "responsive_web_grok_show_grok_translated_post": True, "responsive_web_grok_analysis_button_from_backend": True,
+    "post_ctas_fetch_enabled": True, "freedom_of_speech_not_reach_fetch_enabled": True,
+    "standardized_nudges_misinfo": True,
+    "tweet_with_visibility_results_prefer_gql_limited_actions_policy_enabled": True,
+    "longform_notetweets_rich_text_read_enabled": True, "longform_notetweets_inline_media_enabled": False,
+    "responsive_web_grok_image_annotation_enabled": True, "responsive_web_grok_imagine_annotation_enabled": True,
+    "responsive_web_grok_community_note_auto_translation_is_enabled": True,
+    "responsive_web_enhance_cards_enabled": False}
 
 def open_with_viewer(path, viewer):
     """Open *path* with the configured viewer command.
@@ -293,31 +323,73 @@ def fetch_user_id(screen_name, headers):
     })
     return data["data"]["user"]["result"]["rest_id"]
 
-def fetch_nth_tweet_id(user_id, headers, n=1):
-    """Return the Nth original tweet (1-based) from UserTweets; skips RTs and replies."""
-    data = _req(USER_TWEETS_URL, headers, {
-        "variables": json.dumps({"userId": user_id, "count": 20, "includePromotedContent": False,
-                                  "withQuickPromoteEligibilityTweetFields": False, "withVoice": True}),
-        "features":  json.dumps(USER_TWEETS_FEAT),
+def fetch_nth_tweet_id(user_id, headers, n=1, with_replies=True):
+    """Return the Nth tweet (1-based) from a user's timeline.
+
+    When with_replies=True (default, requires auth): uses UserTweetsAndReplies so
+    the user's own replies are included alongside original tweets and RTs.
+    When with_replies=False: uses UserTweets and skips replies.
+
+    Both modes always skip RTs.  guest mode forces with_replies=False since
+    UserTweetsAndReplies requires authentication.
+    """
+    if with_replies:
+        url  = USER_TWEETS_AND_REPLIES_URL
+        feat = USER_TWEETS_AND_REPLIES_FEAT
+        variables = {"userId": user_id, "count": 20, "includePromotedContent": True,
+                     "withCommunity": True, "withVoice": True}
+        # This endpoint requires its own bearer token
+        headers = dict(headers, Authorization=f"Bearer {BEARER2}")
+    else:
+        url  = USER_TWEETS_URL
+        feat = USER_TWEETS_FEAT
+        variables = {"userId": user_id, "count": 20, "includePromotedContent": False,
+                     "withQuickPromoteEligibilityTweetFields": False, "withVoice": True}
+
+    data = _req(url, headers, {
+        "variables":    json.dumps(variables),
+        "features":     json.dumps(feat),
         "fieldToggles": json.dumps({"withArticlePlainText": False}),
     })
     instructions = data["data"]["user"]["result"]["timeline"]["timeline"]["instructions"]
     hits = []
+
     for instr in instructions:
         if instr.get("type") != "TimelineAddEntries":
             continue
         for entry in instr.get("entries", []):
             eid = entry.get("entryId", "")
-            if "pin" in eid or not eid.startswith("tweet-"):
+            if "pin" in eid:
                 continue
-            result = (entry.get("content", {}).get("itemContent", {})
-                          .get("tweet_results", {}).get("result", {}))
-            leg = result.get("legacy", {})
-            if leg.get("retweeted_status_id_str") or leg.get("in_reply_to_status_id_str"):
-                continue
-            hits.append(result.get("rest_id"))
+
+            if eid.startswith("tweet-"):
+                result = (entry.get("content", {}).get("itemContent", {})
+                               .get("tweet_results", {}).get("result", {}))
+                leg = result.get("legacy", {})
+                if leg.get("retweeted_status_id_str"):
+                    continue
+                if not with_replies and leg.get("in_reply_to_status_id_str"):
+                    continue
+                hits.append(result.get("rest_id"))
+
+            elif with_replies and eid.startswith("profile-conversation"):
+                items = entry.get("content", {}).get("items", [])
+                if not items:
+                    continue
+                last = items[-1]
+                result = (last.get("item", {}).get("itemContent", {})
+                               .get("tweet_results", {}).get("result", {}))
+                leg = result.get("legacy", {})
+                # Must be an actual reply by the user (sanity check)
+                if not leg.get("in_reply_to_status_id_str"):
+                    continue
+                if leg.get("retweeted_status_id_str"):
+                    continue
+                hits.append(result.get("rest_id"))
+
             if len(hits) >= n:
                 return hits[-1]
+
     return hits[-1] if hits else None
 
 def _parse_user(ur):
@@ -1856,6 +1928,10 @@ async def _main():
     p.add_argument("--no-context", action="store_true", default=_b("no_context"), help="Only show focal tweet, no thread")
     p.add_argument("--no-retina",  action="store_true", default=_b("no_retina"), help="Generate a 50%% smaller image")
     p.add_argument("--guest",      action="store_true", default=_b("guest"), help="Guest mode (no account needed)")
+    p.add_argument("--with-replies", action=argparse.BooleanOptionalAction,
+                   default=_b("with_replies"),
+                   help="Include the user's own replies when fetching @user timeline "
+                        "(default: on; requires auth — silently ignored in guest mode)")
     p.add_argument("--width",      type=int, default=int(conf.get("width", 598)))
     p.add_argument("--css",        default=conf.get("css") or None, help="File to override the theme (ex: nitter/public/css/themes/pleroma.css)")
     p.add_argument("--nitter",     action="store_true", default=_b("nitter"), help="Use Nitter default theme")
@@ -1930,7 +2006,9 @@ async def _main():
                 sys.exit("Error: --auth-token/--csrf-token required (or use --guest)")
             headers = auth_headers(args.auth_token, args.csrf_token)
         user_id = fetch_user_id(args.user, headers)
-        tweet_id = fetch_nth_tweet_id(user_id, headers, n=tweet_index)
+        # UserTweetsAndReplies requires auth; fall back to UserTweets in guest mode
+        use_with_replies = args.with_replies and not args.guest
+        tweet_id = fetch_nth_tweet_id(user_id, headers, n=tweet_index, with_replies=use_with_replies)
         if not tweet_id:
             sys.exit(f"Error: no suitable tweet found for @{args.user}")
         if args.guest:
