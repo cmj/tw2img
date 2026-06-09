@@ -2107,6 +2107,9 @@ async def _main():
     if args.no_context:
         tweets = [tweets[-1]]
 
+    if tweets[-1].get("rt_by_user"):
+        tweets = [tweets[-1]]
+
     if args.last_reply and len(tweets) > 2:
         tweets = tweets[-2:]
 
