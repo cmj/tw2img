@@ -29,6 +29,8 @@ playwright install chromium
 
 ---
 
+See [Documentation](/docs) for details.
+
 ## Quick Start
 
 ### 1. Guest Mode (no auth token required, missing context for replies)
