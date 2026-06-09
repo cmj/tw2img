@@ -81,6 +81,9 @@ tw2img 2054583770045386950
 | `--light` | Use light theme (default is dark) |
 | `--no-source` | Hide the "Twitter for iPhone" source text |
 | `--no-context` | Show only the focal tweet, no thread/replies |
+| `--last-reply` | Show only the immediate parent tweet + focal tweet (trims long threads) |
+| `--top-reply` | Append the top reply (sorted by likes) below the focal tweet |
+| `--top-replies <N>` | Append the top N replies (sorted by likes) below the focal tweet (1–20) |
 | `--no-retina` | Disable 2x retina rendering (smaller file) |
 | `--full-stats` | Show full numbers instead of abbreviated (e.g. 12,345 instead of 12.3K) |
 | `--output-dir <path>` | Directory to save output PNG (default: current working directory) |

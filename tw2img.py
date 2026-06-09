@@ -16,6 +16,8 @@ Notes:
     @username 3 out.png  same, saves to out.png
     --with-replies       also include own replies in @user timeline (auth only, opt-in)
     --last-reply         for reply threads: show only immediate parent + focal tweet
+    --top-reply          append the top reply (by likes) below the focal tweet
+    --top-replies N      append top N replies (by likes) below focal tweet (1-20)
     --guest for no authentication, won't see conversation context
     --user <screen_name> to fetch latest tweet from user
     export TWITTER_AUTH_TOKEN=<auth_token>
@@ -76,13 +78,14 @@ BEARER = "AAAAAAAAAAAAAAAAAAAAANRILgAAAAAAnNwIzUejRCOuH5E6I8xnZz4puTs%3D1Zv7ttfk
 BEARER2 = "AAAAAAAAAAAAAAAAAAAAACHguwAAAAAAaSlT0G31NDEyg%2BSnBN5JuyKjMCU%3Dlhg0gv0nE7KKyiJNEAojQbn8Y3wJm1xidDK7VnKGBP4ByJwHPb"
 UA = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
 
-TWEET_DETAIL_URL        = "https://x.com/i/api/graphql/xIYgDwjboktoFeXe_fgacw/TweetDetail"
-TWEET_RESULT_URL        = "https://api.x.com/graphql/SgZWKwvBiOKrSC0QeOGvXw/TweetResultByRestId"
+TWEET_DETAIL_URL               = "https://x.com/i/api/graphql/xIYgDwjboktoFeXe_fgacw/TweetDetail"
+TWEET_RESULT_URL               = "https://api.x.com/graphql/SgZWKwvBiOKrSC0QeOGvXw/TweetResultByRestId"
 USER_BY_SCREEN_NAME_URL        = "https://x.com/i/api/graphql/laYnJPCAcVo0o6pzcnlVxQ/UserByScreenName"
 USER_TWEETS_URL                = "https://x.com/i/api/graphql/fgsimYxdCfQmTI_dtJsTXw/UserTweets"
 USER_TWEETS_AND_REPLIES_URL    = "https://x.com/i/api/graphql/xdqXQQg4vOBF9Np6VtUsdw/UserTweetsAndReplies"
 GUEST_TOKEN_URL                = "https://api.twitter.com/1.1/guest/activate.json"
 
+# rankingMode: Likes, Recency, Relevance
 TWEET_DETAIL_VARS   = lambda id: {"focalTweetId": id, "with_rux_injections": True,
     "rankingMode": "Likes", "includePromotedContent": False, "withCommunity": True,
     "withQuickPromoteEligibilityTweetFields": False, "withBirdwatchNotes": True, "withVoice": True}
@@ -777,6 +780,37 @@ def parse_tweet_detail(data, focal_id):
         cur = next_cur
     return chain if chain else list(by_id.values())
 
+def parse_top_reply(data, focal_id, count=1):
+    """Return up to `count` top-reply tweets (one per conversationthread entry) after the focal
+    tweet.  TweetDetail is fetched with rankingMode=Likes so threads are already sorted."""
+    instr   = data["data"]["threaded_conversation_with_injections_v2"]["instructions"]
+    entries = next((i["entries"] for i in instr if i.get("type") == "TimelineAddEntries"), [])
+    results = []
+    focal_seen = False
+    for e in entries:
+        if len(results) >= count:
+            break
+        eid = e.get("entryId", "")
+        if eid == f"tweet-{focal_id}":
+            focal_seen = True
+            continue
+        if not focal_seen:
+            continue
+        if not eid.startswith("conversationthread-"):
+            continue
+        # Each conversationthread entry's first item is the lead reply tweet
+        items = e.get("content", {}).get("items", [])
+        for item in items:
+            result = (item.get("item", {}).get("itemContent", {})
+                         .get("tweet_results", {}).get("result", {}))
+            if not result or result.get("__typename") == "TweetTombstone":
+                continue
+            t = _parse_tweet_result(result, _parse_user)
+            if t:
+                results.append(t)
+                break
+    return results
+
 def parse_tweet_result_single(data):
     result = data["data"]["tweetResult"]["result"]
     if result.get("__typename") == "TweetTombstone":
@@ -1292,6 +1326,8 @@ SHARED_CSS = """
 .rt-header { display: flex; align-items: center; color: var(--grey); font-size: 13px; font-weight: 700; padding: 14px 14px 0 53px; gap: 5px; }
 .rt-header svg { flex-shrink: 0; }
 .focal-header.has-rt { padding-top: 0; }
+.top-reply-divider { height: 1px; background: var(--border); margin: 0 14px; }
+.tweet-row.top-reply { padding-top: 10px; }
 """
 
 _LANG_NAMES = {
@@ -1617,7 +1653,7 @@ def card_html(card):
 </a>'''
 
 
-def tweet_row_html(t, is_parent=False, no_source=False):
+def tweet_row_html(t, is_parent=False, no_source=False, is_reply=False):
     if t.get("__tombstone"):
         sn = t.get("screen_name", "")
         label = f"This tweet from @{sn} is unavailable." if sn else "This tweet is unavailable."
@@ -1646,7 +1682,7 @@ def tweet_row_html(t, is_parent=False, no_source=False):
     is_ai       = t.get("is_ai_media", False)
     media_block = (attr_block + media_html(t["ext_entities"], is_ai=is_ai)) if attr_block else media_html(t["ext_entities"], is_ai=is_ai)
     time_str    = rel_time(t["created_at"])
-    row_class   = "tweet-row" + ("" if is_parent else " focal")
+    row_class   = "tweet-row" + (" top-reply" if is_reply else ("" if is_parent else " focal"))
 
     rt_by = t.get("rt_by_user")
     rt_header = ""
@@ -1723,11 +1759,12 @@ def tweet_row_html(t, is_parent=False, no_source=False):
       <span class="stat">{icon_svg("views",   13, grey)} {fmt(t["view_count"])}</span>
       {src}
     </div>"""
-    if is_parent:
+    if is_parent or is_reply:
+        no_thread_line = is_reply
         return f"""{rt_header}<div class="{row_class}">
   <div class="left-col">
     <img class="avatar" src="{u["avatar_url"]}">
-    <div class='thread-line'></div>
+    {"" if no_thread_line else "<div class='thread-line'></div>"}
   </div>
   <div class="right-col">
     <div class="tweet-header">
@@ -1820,7 +1857,7 @@ def _apply_nitter_theme(css_text):
         return ""
     return "body {\n" + "\n".join(lines) + "\n    background: var(--bg);\n    color: var(--fg);\n}\na { color: var(--link); text-decoration: none; }\n"
 
-def build_html(tweets, light=False, no_source=False, css_path=None, width=598, nitter=False, for_browser=False):
+def build_html(tweets, light=False, no_source=False, css_path=None, width=598, nitter=False, for_browser=False, top_reply=None):  # top_reply: list
     theme_css = LIGHT_CSS if light else DARK_CSS
     if nitter and not css_path:
         override = _apply_nitter_theme(NITTER_CSS)
@@ -1837,6 +1874,10 @@ def build_html(tweets, light=False, no_source=False, css_path=None, width=598, n
     rows = []
     for i, t in enumerate(tweets):
         rows.append(tweet_row_html(t, is_parent=(i < len(tweets)-1), no_source=no_source))
+    if top_reply:
+        rows.append('<div class="top-reply-divider"></div>')
+        for tr in top_reply:
+            rows.append(tweet_row_html(tr, is_parent=False, no_source=no_source, is_reply=True))
     if for_browser:
         # When viewed in a real browser, center the tweet card in the viewport.
         centering_css = f"""
@@ -1973,6 +2014,10 @@ async def _main():
     p.add_argument("--no-context", action="store_true", default=_b("no_context"), help="Only show focal tweet, no thread")
     p.add_argument("--last-reply", action="store_true", default=_b("last_reply"),
                    help="For reply threads: show only the immediate parent tweet + focal tweet (trims long threads)")
+    p.add_argument("--top-reply",   action="store_true", default=_b("top_reply"),
+                   help="Append the top reply (sorted by likes) below the focal tweet")
+    p.add_argument("--top-replies", type=lambda x: max(1, min(20, int(x))), default=None, metavar="N",
+                   help="Append top N replies (by likes) below focal tweet (1-20)")
     p.add_argument("--no-retina",  action="store_true", default=_b("no_retina"), help="Generate a 50%% smaller image")
     p.add_argument("--guest",      action="store_true", default=_b("guest"), help="Guest mode (no account needed)")
     p.add_argument("--with-replies", action=argparse.BooleanOptionalAction,
@@ -2116,6 +2161,11 @@ async def _main():
     if not tweets:
         sys.exit("Failed to parse tweet from API response")
 
+    top_reply_tweets = []
+    _tr_count = args.top_replies if args.top_replies else (1 if args.top_reply else 0)
+    if _tr_count and "threaded_conversation_with_injections_v2" in data.get("data", {}):
+        top_reply_tweets = parse_top_reply(data, fid, count=_tr_count)
+
     tweet_id = tweets[-1]["id"]
     focal = tweets[-1]
 
@@ -2183,7 +2233,8 @@ async def _main():
         output = resolve_output_path(output, dup_mode)
 
     html = build_html(tweets, light=args.light, no_source=args.no_source, css_path=args.css, width=args.width, nitter=args.nitter,
-                      for_browser=(args.save_html is not None or _view_html_requested))
+                      for_browser=(args.save_html is not None or _view_html_requested),
+                      top_reply=top_reply_tweets)
 
     if args.save_html is not None:
         if args.save_html == "":

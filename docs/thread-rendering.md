@@ -24,6 +24,20 @@ tw2img 2054583770045386950 --last-reply
 
 Has no effect on threads of two tweets or fewer. Can be set persistently via `last_reply = true` in `tw2img.conf`.
 
+## `--top-reply` / `--top-replies`
+
+In authenticated mode, `TweetDetail` returns reply threads sorted by likes (`rankingMode=Likes`). These options append the most-liked replies below the focal tweet, separated by a thin divider line:
+
+```bash
+# Append the single top reply
+tw2img 2054583770045386950 --top-reply
+
+# Append the top 5 replies
+tw2img 2054583770045386950 --top-replies 5
+```
+
+`--top-reply` appends exactly one reply. `--top-replies N` accepts 1–20. Each entry is the lead tweet of its reply thread (i.e. the first tweet in that conversationthread). Both options are no-ops when fetching via `tweetResult` (single-tweet endpoint) or in guest mode, since reply ranking data is not available.
+
 ## Tombstones
 
 Deleted or restricted tweets that appear in a thread are rendered as a grey "This tweet is unavailable" placeholder with a question-mark avatar. The thread visual continuity is preserved rather than silently dropping the gap.
