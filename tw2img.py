@@ -1289,8 +1289,9 @@ SHARED_CSS = """
 .focal-header-bottom { display: flex; flex-direction: column; align-items: flex-start; }
 .focal-header-bottom .username { color: var(--accent); font-size: 14px; padding-left: 0; }
 .focal-body { padding: 0 14px 14px; }
-.rt-header { display: flex; align-items: center; color: var(--grey); font-size: 13px; font-weight: 700; padding: 8px 14px 0 53px; gap: 5px; }
+.rt-header { display: flex; align-items: center; color: var(--grey); font-size: 13px; font-weight: 700; padding: 14px 14px 0 53px; gap: 5px; }
 .rt-header svg { flex-shrink: 0; }
+.focal-header.has-rt { padding-top: 0; }
 """
 
 _LANG_NAMES = {
@@ -1748,8 +1749,8 @@ def tweet_row_html(t, is_parent=False, no_source=False):
   </div>
 </div>"""
     else:
-        return f"""{rt_header}<div class="{row_class}">
-  <div class="focal-header">
+        return f"""<div class="{row_class}">
+   {rt_header}<div class="focal-header{" has-rt" if rt_by else ""}">
     <img class="avatar" src="{u["avatar_url"]}">
     <div class="focal-header-names">
       <div class="focal-header-top"><span class="fullname">{u["name"]}</span>{vicon}</div>
