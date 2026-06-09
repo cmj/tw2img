@@ -15,6 +15,7 @@ Notes:
     @username 3          grabs the 3rd most-recent tweet (skips RTs/replies)
     @username 3 out.png  same, saves to out.png
     --with-replies       also include own replies in @user timeline (auth only, opt-in)
+    --last-reply         for reply threads: show only immediate parent + focal tweet
     --guest for no authentication, won't see conversation context
     --user <screen_name> to fetch latest tweet from user
     export TWITTER_AUTH_TOKEN=<auth_token>
@@ -1207,7 +1208,7 @@ a { color: var(--link); text-decoration: none; }
 """
 
 SHARED_CSS = """
-.thread { padding-top: 10px; }
+.thread { padding-top: 3px; }
 .tweet-row { display: flex; padding: 12px 14px 0; }
 .tweet-row:last-child { padding-bottom: 14px; }
 .left-col { display: flex; flex-direction: column; align-items: center; flex-shrink: 0; width: 46px; margin-right: 10px; }
@@ -1287,7 +1288,7 @@ SHARED_CSS = """
 .focal-header-top .fullname { font-size: 15px; font-weight: 700; }
 .focal-header-bottom { display: flex; flex-direction: column; align-items: flex-start; }
 .focal-header-bottom .username { color: var(--accent); font-size: 14px; padding-left: 0; }
-.focal-body { padding: 0 14px 14px; }
+.focal-body { padding: 0 14px 7px; }
 .rt-header { display: flex; align-items: center; color: var(--grey); font-size: 13px; font-weight: 700; padding: 8px 14px 0 53px; gap: 5px; }
 .rt-header svg { flex-shrink: 0; }
 """
@@ -1969,6 +1970,8 @@ async def _main():
     p.add_argument("--light",      action="store_true", default=_b("light"), help="Render image in light mode")
     p.add_argument("--no-source",  action="store_true", default=_b("no_source"), help="Hide the device name used (iPhone, etc)")
     p.add_argument("--no-context", action="store_true", default=_b("no_context"), help="Only show focal tweet, no thread")
+    p.add_argument("--last-reply", action="store_true", default=_b("last_reply"),
+                   help="For reply threads: show only the immediate parent tweet + focal tweet (trims long threads)")
     p.add_argument("--no-retina",  action="store_true", default=_b("no_retina"), help="Generate a 50%% smaller image")
     p.add_argument("--guest",      action="store_true", default=_b("guest"), help="Guest mode (no account needed)")
     p.add_argument("--with-replies", action=argparse.BooleanOptionalAction,
@@ -2102,6 +2105,9 @@ async def _main():
 
     if args.no_context:
         tweets = [tweets[-1]]
+
+    if args.last_reply and len(tweets) > 2:
+        tweets = tweets[-2:]
 
     if not tweets:
         sys.exit("Failed to parse tweet from API response")

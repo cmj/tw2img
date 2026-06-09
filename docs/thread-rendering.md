@@ -14,6 +14,16 @@ Render only the focal tweet, stripping all parents:
 tw2img 2054583770045386950 --guest --light --no-context
 ```
 
+## `--last-reply`
+
+For long reply threads, render only the immediate parent tweet and the focal tweet, trimming all earlier ancestors:
+
+```bash
+tw2img 2054583770045386950 --last-reply
+```
+
+Has no effect on threads of two tweets or fewer. Can be set persistently via `last_reply = true` in `tw2img.conf`.
+
 ## Tombstones
 
 Deleted or restricted tweets that appear in a thread are rendered as a grey "This tweet is unavailable" placeholder with a question-mark avatar. The thread visual continuity is preserved rather than silently dropping the gap.
