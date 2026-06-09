@@ -1117,7 +1117,7 @@ def icon_svg(name, size=13, color="currentColor"):
                 f'xmlns="http://www.w3.org/2000/svg" style="display:inline-block;vertical-align:middle;flex-shrink:0">'
                 f'<path d="{d}" fill="{color}" fill-rule="evenodd" clip-rule="evenodd"/></svg>')
     w = adv * size / 1000
-    return (f'<svg width="{w:.1f}" height="{size}" viewBox="0 0 {adv} 1000" '
+    return (f'<svg width="{w:.1f}" height="{size}" viewBox="0 150 {adv} 850" '
             f'xmlns="http://www.w3.org/2000/svg" style="display:inline-block;vertical-align:middle;flex-shrink:0">'
             f'<g transform="scale(1,-1) translate(0,-850)"><path d="{d}" fill="{color}"/></g></svg>')
 
@@ -1208,8 +1208,8 @@ a { color: var(--link); text-decoration: none; }
 """
 
 SHARED_CSS = """
-.thread { padding-top: 3px; }
-.tweet-row { display: flex; padding: 12px 14px 0; }
+
+.tweet-row { display: flex; padding: 14px 14px 0; }
 .tweet-row:last-child { padding-bottom: 14px; }
 .left-col { display: flex; flex-direction: column; align-items: center; flex-shrink: 0; width: 46px; margin-right: 10px; }
 .avatar { width: 46px; height: 46px; border-radius: 23px; display: block; }
@@ -1228,7 +1228,7 @@ SHARED_CSS = """
 .focal .tweet-date { color: var(--grey); font-size: 13px; margin-bottom: 0; padding-top: 6px; }
 .stats { display: flex; align-items: center; color: var(--grey); font-size: 13px; padding-top: 8px; }
 .stat { white-space: nowrap; margin-right: 10px; }
-.stat svg { margin: 3px 1px 5px 0; }
+.stat svg { margin: 0 1px 0 0; }
 .source { margin-left: auto; font-size: 12px; }
 .media-row { display: grid; margin: 6px 0; border-radius: 10px; overflow: hidden; gap: 3px; }
 .media-row .attachment { min-height: 0; overflow: hidden; }
@@ -1281,14 +1281,14 @@ SHARED_CSS = """
 .card-title { font-size: 14px; font-weight: 700; line-height: 1.3; margin-bottom: 2px; }
 .card-desc { font-size: 13px; color: var(--grey); line-height: 1.4; }
 .tweet-row.focal { flex-direction: column; padding: 0; }
-.focal-header { display: flex; align-items: center; padding: 0 14px 8px; gap: 12px; }
+.focal-header { display: flex; align-items: center; padding: 14px 14px 8px; gap: 12px; }
 .focal-header .avatar { width: 46px; height: 46px; border-radius: 23px; flex-shrink: 0; }
 .focal-header-names { display: flex; flex-direction: column; justify-content: center; line-height: 1.25; }
 .focal-header-top { display: flex; align-items: center; gap: 0; }
 .focal-header-top .fullname { font-size: 15px; font-weight: 700; }
 .focal-header-bottom { display: flex; flex-direction: column; align-items: flex-start; }
 .focal-header-bottom .username { color: var(--accent); font-size: 14px; padding-left: 0; }
-.focal-body { padding: 0 14px 7px; }
+.focal-body { padding: 0 14px 14px; }
 .rt-header { display: flex; align-items: center; color: var(--grey); font-size: 13px; font-weight: 700; padding: 8px 14px 0 53px; gap: 5px; }
 .rt-header svg { flex-shrink: 0; }
 """
