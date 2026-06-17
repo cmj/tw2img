@@ -1339,7 +1339,7 @@ _LANG_NAMES = {
     "eo": "Esperanto", "et": "Estonian", "fi": "Finnish", "fr": "French",
     "fy": "Frisian", "gl": "Galician", "ka": "Georgian", "de": "German",
     "el": "Greek", "gu": "Gujarati", "ht": "Haitian Creole", "ha": "Hausa",
-    "haw": "Hawaiian", "he": "Hebrew", "hi": "Hindi", "hmn": "Hmong",
+    "haw": "Hawaiian", "he": "Hebrew", "iw": "Hebrew", "hi": "Hindi", "hmn": "Hmong",
     "hu": "Hungarian", "is": "Icelandic", "ig": "Igbo", "id": "Indonesian",
     "ga": "Irish", "it": "Italian", "ja": "Japanese", "jv": "Javanese",
     "kn": "Kannada", "kk": "Kazakh", "km": "Khmer", "rw": "Kinyarwanda",
@@ -1401,7 +1401,7 @@ def _trans_label_html(lang_name):
         return ""
     return (
         f'<div class="translated-from" style="font-size:10px;color:var(--accent);'
-        f'margin-top:3px;line-height:1.3;opacity:0.75;">'
+        f'margin-bottom:3px;line-height:1.3;opacity:0.75;">'
         f'Translated from {lang_name}</div>'
     )
 
@@ -1447,8 +1447,8 @@ def quote_block_html(qt):
     <span class="quote-sn">@{u["screen_name"]}</span>
     <span class="quote-time">{time}</span>
   </div>
-  <div class="quote-text">{text}</div>
   {_trans_label_html(qt.get("translated_from"))}
+  <div class="quote-text">{text}</div>
   {media}
 </div>"""
 
@@ -1774,8 +1774,8 @@ def tweet_row_html(t, is_parent=False, no_source=False, is_reply=False):
       <span class="tweet-time">{time_str}</span>
     </div>
     {replying}
-    <div class="tweet-content">{tweet_text}</div>
     {_trans_label_html(t.get("translated_from"))}
+    <div class="tweet-content">{tweet_text}</div>
     {media_block}
     {grok_html}
     {card_block}
@@ -1797,8 +1797,8 @@ def tweet_row_html(t, is_parent=False, no_source=False, is_reply=False):
   </div>
   <div class="focal-body">
     {replying}
-    <div class="tweet-content">{tweet_text}</div>
     {_trans_label_html(t.get("translated_from"))}
+    <div class="tweet-content">{tweet_text}</div>
     {media_block}
     {grok_html}
     {card_block}
