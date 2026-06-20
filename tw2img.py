@@ -16,8 +16,9 @@ Notes:
     @username 3 out.png  same, saves to out.png
     --with-replies       also include own replies in @user timeline (auth only, opt-in)
     --last-reply         for reply threads: show only immediate parent + focal tweet
-    --top-reply          append the top reply (by likes) below the focal tweet
-    --top-replies N      append top N replies (by likes) below focal tweet (1-20)
+    --top-reply           append the top reply (by likes) below the focal tweet
+    --top-replies N       append top N replies (by likes) below focal tweet (1-20)
+    --no-nested-quotes    don't fetch a quoted tweet's own quoted tweet (shown as a link instead)
     --guest for no authentication, won't see conversation context
     --user <screen_name> to fetch latest tweet from user
     export TWITTER_AUTH_TOKEN=<auth_token>
@@ -317,6 +318,59 @@ def fetch_tweet_result(tweet_id, headers):
         "fieldToggles": json.dumps(TWEET_RESULT_FTOG),
     })
 
+def _quote_chain_has_stub(qt):
+    """True if *qt* (a parsed quoted-tweet dict, possibly nested) contains an
+    unresolved stub anywhere down its 'quoted' chain."""
+    while qt:
+        if qt.get("__stub"):
+            return True
+        qt = qt.get("quoted")
+    return False
+
+def resolve_quote_chain(qt, headers, depth=0, max_depth=3, quiet=True):
+    """Resolve a 'quote of a quote' stub (see _parse_tweet_result) by fetching
+    the missing tweet with TweetResultByRestId and parsing it like any other
+    tweet. Recurses up to max_depth levels in case the resolved tweet itself
+    quotes yet another quote. Network/parse failures are swallowed and the
+    stub is left in place so quote_block_html() can fall back to a plain
+    link -- nested-quote context is a nice-to-have, not worth aborting over."""
+    if not qt or depth >= max_depth:
+        return qt
+    if qt.get("__stub"):
+        try:
+            data = fetch_tweet_result(qt["id"], headers)
+            result = data["data"]["tweetResult"]["result"]
+            if result.get("__typename") == "TweetTombstone":
+                tombstone_text = (result.get("tombstone", {}).get("text", {}).get("text")
+                                  or "This tweet is unavailable.")
+                return {"__tombstone": True, "screen_name": qt.get("screen_name", ""), "text": tombstone_text}
+            resolved = _parse_tweet_result(result, _parse_user)
+            if resolved:
+                resolved["quoted"] = resolve_quote_chain(resolved.get("quoted"), headers, depth + 1, max_depth, quiet)
+                return resolved
+        except Exception as e:
+            if not quiet:
+                print(f"Warning: couldn't resolve nested quoted tweet {qt.get('id')}: {e}", file=sys.stderr)
+        return qt  # leave the stub in place; renders as a fallback link
+    if qt.get("__tombstone"):
+        return qt
+    qt["quoted"] = resolve_quote_chain(qt.get("quoted"), headers, depth + 1, max_depth, quiet)
+    return qt
+
+def resolution_headers(args, headers):
+    """Best-effort headers for resolving nested quoted tweets: reuse whatever
+    headers were already built for the main fetch, otherwise build auth
+    headers from --auth-token/--csrf-token, otherwise fall back to a fresh
+    guest token (no credentials needed). Returns None if nothing works."""
+    if headers:
+        return headers
+    if args.auth_token and args.csrf_token:
+        return auth_headers(args.auth_token, args.csrf_token)
+    try:
+        return guest_headers(get_guest_token())
+    except Exception:
+        return None
+
 def fetch_user_id(screen_name, headers):
     ubsn_headers = dict(headers)
     if "x-twitter-auth-type" in headers:
@@ -536,6 +590,18 @@ def _parse_tweet_result(result, user_parser):
         m_sn = re.search(r"(?:twitter|x)\.com/([^/]+)/status", expanded)
         sn = m_sn.group(1) if m_sn else ""
         quoted = {"__tombstone": True, "screen_name": sn, "text": "This tweet is unavailable."}
+    elif leg.get("quoted_status_id_str"):
+        # A "quote of a quote": X's API only hydrates one level of
+        # quoted_status_result, so a tweet that quotes an already-quoting
+        # tweet shows up here with just a stub ("quotedRefResult" containing
+        # only a rest_id, or no result at all) instead of full tweet data.
+        # Keep a lightweight stub; resolve_quote_chain() can fetch the full
+        # tweet separately (this is the "quoted quote" nitter/X also miss).
+        permalink = leg.get("quoted_status_permalink", {})
+        expanded = permalink.get("expanded", "")
+        m_sn = re.search(r"(?:twitter|x)\.com/([^/]+)/status", expanded)
+        sn = m_sn.group(1) if m_sn else ""
+        quoted = {"__stub": True, "id": leg["quoted_status_id_str"], "screen_name": sn, "permalink": expanded}
 
     rt_id = leg.get("retweeted_status_id_str")
 
@@ -1304,6 +1370,17 @@ SHARED_CSS = """
 .quote-media .media-row { margin: 0; border-radius: 0; }
 .quote-media .media-grid-2x2 { margin: 0; border-radius: 0; }
 .quote-media .media-grid-3 { margin: 0; border-radius: 0; }
+/* "Quote of a quote": a smaller quote-block nested inside another one */
+.quote-block .quote-block { margin: 8px 0 0; border-radius: 8px; }
+.quote-block .quote-block .quote-avatar { width: 16px; height: 16px; border-radius: 8px; }
+.quote-block .quote-block .quote-name { font-size: 13px; }
+.quote-block .quote-block .quote-sn { font-size: 12px; }
+.quote-block .quote-block .quote-time { font-size: 12px; }
+.quote-block .quote-block .quote-text { font-size: 13px; }
+.quote-block .quote-block .quote-media { margin: 6px -10px 0; }
+.quote-stub { padding: 9px 12px; }
+.quote-stub-link { display: flex; align-items: center; gap: 5px; font-size: 13px; color: var(--accent); text-decoration: none; }
+.quote-stub-link:hover { text-decoration: underline; }
 .birdwatch { border: 1px solid var(--border); border-radius: 10px; margin: 6px 0; background: var(--bw-bg); overflow: hidden; }
 .community-note-header { background-color: var(--bg-hover); font-weight: 700; font-size: 13px; padding: 6px 10px 8px; display: flex; align-items: center; gap: 12px; color: var(--fg); }
 .community-note-header .icon-container { flex-shrink: 0; color: var(--accent); }
@@ -1405,13 +1482,25 @@ def _trans_label_html(lang_name):
         f'Translated from {lang_name}</div>'
     )
 
-def quote_block_html(qt):
+def quote_block_html(qt, depth=0):
     if not qt: return ""
     if qt.get("__tombstone"):
         sn = qt.get("screen_name", "")
         label = f"This tweet from @{sn} is unavailable." if sn else qt.get("text", "This tweet is unavailable.")
         return f'''<div class="quote-block" style="display:flex;align-items:center;justify-content:center;padding:14px 12px;">
   <span style="color:var(--grey);font-size:14px;">{label}</span>
+</div>'''
+    if qt.get("__stub"):
+        # Nested quote X never hydrated for us (a "quote of a quote") and we
+        # weren't able to (or didn't try to) fetch it separately -- show a
+        # plain link instead of silently dropping the context.
+        sn   = qt.get("screen_name", "")
+        link = qt.get("permalink", "")
+        label = f"Quoted @{sn}'s post" if sn else "Quoted another post"
+        open_tag  = f'<a class="quote-stub-link" href="{link}">' if link else '<span class="quote-stub-link">'
+        close_tag = "</a>" if link else "</span>"
+        return f'''<div class="quote-block quote-stub">
+  {open_tag}{icon_svg("quote", 13, "var(--accent)")}<span>{label}</span>{close_tag}
 </div>'''
     u    = qt["user"]
     text = linkify(qt["full_text"], qt["entities"])
@@ -1440,6 +1529,12 @@ def quote_block_html(qt):
         else:
             media = f'<div class="quote-media">{media_html(qt["ext_entities"])}</div>'
     has_media_cls = " has-media" if media else ""
+    # A quote tweet can itself quote another tweet ("quote of a quote"); when
+    # that inner quote was resolved (see resolve_quote_chain), render it as a
+    # smaller quote-block nested inside this one, same as X does.
+    nested = ""
+    if depth < 2 and qt.get("quoted"):
+        nested = quote_block_html(qt["quoted"], depth + 1)
     return f"""<div class="quote-block{has_media_cls}">
   <div class="quote-header">
     <img class="quote-avatar" src="{u["avatar_url"]}">
@@ -1450,6 +1545,7 @@ def quote_block_html(qt):
   {_trans_label_html(qt.get("translated_from"))}
   <div class="quote-text">{text}</div>
   {media}
+  {nested}
 </div>"""
 
 GROK_SVG = (
@@ -2018,6 +2114,8 @@ async def _main():
                    help="Append the top reply (sorted by likes) below the focal tweet")
     p.add_argument("--top-replies", type=lambda x: max(1, min(20, int(x))), default=None, metavar="N",
                    help="Append top N replies (by likes) below focal tweet (1-20)")
+    p.add_argument("--no-nested-quotes", action="store_true", default=_b("no_nested_quotes"),
+                   help="Don't fetch/render a 'quote of a quote' (the quoted tweet's own quoted tweet); shows a plain link instead")
     p.add_argument("--no-retina",  action="store_true", default=_b("no_retina"), help="Generate a 50%% smaller image")
     p.add_argument("--guest",      action="store_true", default=_b("guest"), help="Guest mode (no account needed)")
     p.add_argument("--with-replies", action=argparse.BooleanOptionalAction,
@@ -2088,6 +2186,7 @@ async def _main():
     inp  = args.input or ""
 
     data = None
+    headers = None
 
     if args.user:
         if args.guest:
@@ -2166,6 +2265,22 @@ async def _main():
     if _tr_count and "threaded_conversation_with_injections_v2" in data.get("data", {}):
         top_reply_tweets = parse_top_reply(data, fid, count=_tr_count)
 
+    # A quote tweet can quote a tweet that is itself quoting something else.
+    # X's API only ever hydrates one level of quoted_status_result, so that
+    # inner "quote of a quote" comes back as a stub (id + permalink only) --
+    # this is the context nitter (and a naive renderer) misses entirely.
+    # Resolving it needs a separate TweetResultByRestId request per stub.
+    if not args.no_nested_quotes:
+        _stub_tweets = [t for t in (tweets + top_reply_tweets) if _quote_chain_has_stub(t.get("quoted"))]
+        if _stub_tweets:
+            _qheaders = resolution_headers(args, headers)
+            if _qheaders:
+                for t in _stub_tweets:
+                    t["quoted"] = resolve_quote_chain(t["quoted"], _qheaders, quiet=args.quiet)
+            elif not args.quiet:
+                print("Note: found a 'quote of a quote' but couldn't fetch it (no auth/network); showing a link instead.",
+                      file=sys.stderr)
+
     tweet_id = tweets[-1]["id"]
     focal = tweets[-1]
 
@@ -2195,7 +2310,7 @@ async def _main():
                     t["full_text"] = translate_text(t["full_text"], effective_src, tgt_lang)
                     t["translated_from"] = _lang_display_name(effective_src)
             qt = t.get("quoted")
-            if qt and not qt.get("__tombstone") and qt.get("full_text"):
+            while qt and not qt.get("__tombstone") and not qt.get("__stub") and qt.get("full_text"):
                 qt_lang = (qt.get("lang") or "").split("-")[0].lower()
                 if qt_lang in _UNTRANSLATABLE_LANGS:
                     pass  # untranslatable Twitter-specific lang code; skip
@@ -2205,6 +2320,7 @@ async def _main():
                         print(f"Translating quoted tweet text ({qt_src} -> {tgt_lang}) ...", file=sys.stderr)
                     qt["full_text"] = translate_text(qt["full_text"], qt_src, tgt_lang)
                     qt["translated_from"] = _lang_display_name(qt_src)
+                qt = qt.get("quoted")  # walk into a "quote of a quote", if any
 
     if args.print_line:
         print(format_tweet_line(focal))
