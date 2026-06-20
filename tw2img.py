@@ -1370,6 +1370,8 @@ SHARED_CSS = """
 .quote-media .media-row { margin: 0; border-radius: 0; }
 .quote-media .media-grid-2x2 { margin: 0; border-radius: 0; }
 .quote-media .media-grid-3 { margin: 0; border-radius: 0; }
+.quote-card { margin: 6px -12px 0; overflow: hidden; border-radius: 0 0 10px 10px; }
+.quote-card .card { border: none; border-radius: 0; margin: 0; }
 /* "Quote of a quote": a smaller quote-block nested inside another one */
 .quote-block .quote-block { margin: 8px 0 0; border-radius: 8px; }
 .quote-block .quote-block .quote-avatar { width: 16px; height: 16px; border-radius: 8px; }
@@ -1378,6 +1380,7 @@ SHARED_CSS = """
 .quote-block .quote-block .quote-time { font-size: 12px; }
 .quote-block .quote-block .quote-text { font-size: 13px; }
 .quote-block .quote-block .quote-media { margin: 6px -10px 0; }
+.quote-block .quote-block .quote-card { margin: 6px -10px 0; }
 .quote-stub { padding: 9px 12px; }
 .quote-stub-link { display: flex; align-items: center; gap: 5px; font-size: 13px; color: var(--accent); text-decoration: none; }
 .quote-stub-link:hover { text-decoration: underline; }
@@ -1448,6 +1451,27 @@ def _lang_display_name(code):
     primary = code.split("-")[0].lower()
     return _LANG_NAMES.get(primary, code)
 
+# deep-translator's GoogleTranslator backend is case-sensitive (rejects "EN",
+# only accepts "en") and a handful of codes don't match ISO 639-1/BCP-47 at
+# all: bare "zh" is rejected (only the region-qualified "zh-CN"/"zh-TW"
+# work), and Hebrew/Javanese still use old codes ("iw"/"jw") rather than the
+# modern ones ("he"/"jv") that X's API and most of the world use.
+_GTRANS_LANG_FIXUPS = {
+    "zh": "zh-CN", "zh-cn": "zh-CN", "zh-hans": "zh-CN", "zh-sg": "zh-CN",
+    "zh-tw": "zh-TW", "zh-hant": "zh-TW", "zh-hk": "zh-TW", "zh-mo": "zh-TW",
+    "he": "iw", "jv": "jw",
+}
+
+def _gtrans_lang(code):
+    """Map a language code to the exact form GoogleTranslator (deep-translator)
+    expects. See _GTRANS_LANG_FIXUPS for why this is needed."""
+    if not code:
+        return code
+    low = code.strip().lower()
+    if low == "auto":
+        return "auto"
+    return _GTRANS_LANG_FIXUPS.get(low, low)
+
 def translate_text(text, source_lang, target_lang):
     """Translate *text* from *source_lang* to *target_lang* using deep-translator.
 
@@ -1466,7 +1490,9 @@ def translate_text(text, source_lang, target_lang):
             "Install it with: pip install deep-translator"
         )
     try:
-        translated = GoogleTranslator(source=source_lang, target=target_lang).translate(text)
+        src = _gtrans_lang(source_lang)
+        tgt = _gtrans_lang(target_lang)
+        translated = GoogleTranslator(source=src, target=tgt).translate(text)
         return translated or text
     except Exception as e:
         print(f"Warning: translation failed ({e}), using original text.", file=sys.stderr)
@@ -1481,6 +1507,38 @@ def _trans_label_html(lang_name):
         f'margin-bottom:3px;line-height:1.3;opacity:0.75;">'
         f'Translated from {lang_name}</div>'
     )
+
+def _birdwatch_html(t):
+    """Return a Community Note box for a parsed tweet dict, or empty string.
+    Shared by the focal/parent tweet path and quote_block_html, since a
+    quoted tweet can carry its own birdwatch note independent of the
+    tweet quoting it."""
+    if not t.get("birdwatch"):
+        return ""
+    bw_text = t["birdwatch"]
+    ents = [e for e in t.get("birdwatch_ents", [])
+            if e.get("fromIndex") is not None and e.get("toIndex") is not None]
+    ents.sort(key=lambda e: e["fromIndex"], reverse=True)
+    for e in ents:
+        start, end = e["fromIndex"], e["toIndex"]
+        ref = e.get("ref", {})
+        href = ref.get("url", "")
+        display = bw_text[start:end]
+        if "help.x.com" in href or "help.x.com" in display:
+            bw_text = bw_text[:start] + bw_text[end:]
+            continue
+        if href:
+            # short 'display' urls are snippets
+            bw_text = bw_text[:start] + f'<a href="{href}">{display}</a>' + bw_text[end:]
+            # full urls are wrapped in t.co links, to enable we need to
+            # HEAD each url, might be too much overhead for birdwatch
+            # cards.
+            # todo: resolve_url() on these
+            #bw_text = bw_text[:start] + f'<a href="{href}">{href}</a>' + bw_text[end:]
+    return f'''<div class="birdwatch">
+          <div class="community-note-header"><span class="icon-container">{icon_svg("group", 13, "var(--accent)")}</span> Community Note</div>
+          <div class="community-note-text">{bw_text}</div>
+        </div>'''
 
 def quote_block_html(qt, depth=0):
     if not qt: return ""
@@ -1529,12 +1587,17 @@ def quote_block_html(qt, depth=0):
         else:
             media = f'<div class="quote-media">{media_html(qt["ext_entities"])}</div>'
     has_media_cls = " has-media" if media else ""
+    qcard = ""
+    if not media and qt.get("card"):
+        qcard = f'<div class="quote-card">{card_html(qt["card"])}</div>'
+        has_media_cls = " has-media"
     # A quote tweet can itself quote another tweet ("quote of a quote"); when
     # that inner quote was resolved (see resolve_quote_chain), render it as a
     # smaller quote-block nested inside this one, same as X does.
     nested = ""
     if depth < 2 and qt.get("quoted"):
         nested = quote_block_html(qt["quoted"], depth + 1)
+    bw_html = _birdwatch_html(qt)
     return f"""<div class="quote-block{has_media_cls}">
   <div class="quote-header">
     <img class="quote-avatar" src="{u["avatar_url"]}">
@@ -1545,7 +1608,9 @@ def quote_block_html(qt, depth=0):
   {_trans_label_html(qt.get("translated_from"))}
   <div class="quote-text">{text}</div>
   {media}
+  {qcard}
   {nested}
+  {bw_html}
 </div>"""
 
 GROK_SVG = (
@@ -1798,33 +1863,7 @@ def tweet_row_html(t, is_parent=False, no_source=False, is_reply=False):
     card_block = card_html(t.get("card")) if not t.get("ext_entities", {}).get("media") else ""
     grok_html = grok_card_html(t.get("grok_question", ""), t.get("grok_answer", ""))
     qt_html = quote_block_html(t["quoted"]) if t.get("quoted") else ""
-    bw_html = ""
-    if t.get("birdwatch"):
-        bw_text = t["birdwatch"]
-        ents = [e for e in t.get("birdwatch_ents", [])
-                if e.get("fromIndex") is not None and e.get("toIndex") is not None]
-        ents.sort(key=lambda e: e["fromIndex"], reverse=True)
-        for e in ents:
-            start, end = e["fromIndex"], e["toIndex"]
-            ref = e.get("ref", {})
-            href = ref.get("url", "")
-            display = bw_text[start:end]
-            if "help.x.com" in href or "help.x.com" in display:
-                bw_text = bw_text[:start] + bw_text[end:]
-                continue
-            if href:
-                # short 'display' urls are snippets
-                bw_text = bw_text[:start] + f'<a href="{href}">{display}</a>' + bw_text[end:]
-                # full urls are wrapped in t.co links, to enable we need to
-                # HEAD each url, might be too much overhead for birdwatch
-                # cards.
-                # todo: resolve_url() on these 
-                #bw_text = bw_text[:start] + f'<a href="{href}">{href}</a>' + bw_text[end:]
-
-        bw_html = f'''<div class="birdwatch">
-          <div class="community-note-header"><span class="icon-container">{icon_svg("group", 13, "var(--accent)")}</span> Community Note</div>
-          <div class="community-note-text">{bw_text}</div>
-        </div>'''
+    bw_html = _birdwatch_html(t)
     broadcast_html = ""
     if t.get("broadcast_card"):
         bc = t["broadcast_card"]
@@ -2290,6 +2329,13 @@ async def _main():
             src_lang, tgt_lang = raw.split(":", 1)
         else:
             src_lang, tgt_lang = "auto", raw
+        if tgt_lang.strip().lower() == "auto":
+            sys.exit(
+                "Error: --trans target language can't be 'auto' -- only the "
+                "source can be auto-detected, not the target. Use a real "
+                "target code, e.g. --trans en, or be explicit about both "
+                "with --trans auto:en."
+            )
         tgt_primary = tgt_lang.split("-")[0].lower()
         for t in tweets:
             if t.get("__tombstone"):

@@ -48,6 +48,18 @@ When the fetched tweet is a retweet, the original author's content is rendered w
 
 When the full RT result object is unavailable, tw2img extracts the original screen name from the `RT @handle:` prefix in the tweet text and strips the prefix before rendering.
 
+## Nested quotes ("quote of a quote")
+
+A quoted tweet can itself quote another tweet. X's API only ever hydrates one level of `quoted_status_result`, so that inner quote normally comes back as a bare reference (id + permalink, no content) — both X's own UI and Nitter just drop it.
+
+By default tw2img makes one extra request (`TweetResultByRestId`) to resolve that inner tweet, recursing up to 3 levels deep, and renders it as a smaller quote-block nested inside the outer one — same as the native chain looks on X. Resolution reuses whatever credentials are already in play (guest token or `--auth-token`/`--csrf-token`); if neither is available it falls back to an on-the-fly guest token.
+
+```bash
+tw2img 2068121255061156077 --guest
+```
+
+If resolution fails (no network, rate-limited, etc.) or is disabled with `--no-nested-quotes`, the inner tweet renders as a small "Quoted @user's post" link to the original instead of silently vanishing. A deleted/restricted inner tweet renders as the same tombstone placeholder used elsewhere in the thread.
+
 ## Reply-to stripping
 
 Twitter prepends leading `@mention` handles to reply text. tw2img detects and strips these, replacing them with a "Replying to @handle" line rendered in grey above the tweet body — matching the native X UI.
