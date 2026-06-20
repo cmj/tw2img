@@ -6,6 +6,7 @@ This style is based on [nitter](https://github.com/zedeus/nitter/) using [Midnig
 
 | ![image grid](img/2041557036274475228-nasa.png) | ![birdwatch note and thread](img/1819250493442695340-note.png) |
 |---|---|
+| Nested quotes (quoted quotes) ![quoted/nested quotes](img/2068121255061156077-quoted_quote.png) | Grab top 2 replies from tweet_id #22, upload to imgur `tw2img --imgur --top-replies 2 22`![top 2 replies](img/noah-22.png) |
 
 ---
 
