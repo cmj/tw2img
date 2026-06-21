@@ -16,10 +16,12 @@ Notes:
     @username 3 out.png  same, saves to out.png
     --with-replies       also include own replies in @user timeline (auth only, opt-in)
     --last-reply         for reply threads: show only immediate parent + focal tweet
-    --top-reply           append the top reply (by likes) below the focal tweet
-    --top-replies N       append top N replies (by likes) below focal tweet (1-20)
-    --no-nested-quotes    don't fetch a quoted tweet's own quoted tweet (shown as a link instead)
-    --guest for no authentication, won't see conversation context
+    --top-reply          append the top reply (by likes) below the focal tweet
+    --top-replies N      append top N replies (by likes) below focal tweet (1-20)
+    --no-nested-quotes   don't fetch a quoted tweet's own quoted tweet (shown as a link instead)
+    --with-note          add the top-voted proposed MISLEADING Community Note (labelled 'Proposed' if not yet shown on Twitter)
+    --with-notes         add every proposed Community Note (misleading and not-misleading) for the tweet
+    --guest              for no authentication, won't see conversation context
     --user <screen_name> to fetch latest tweet from user
     export TWITTER_AUTH_TOKEN=<auth_token>
     export TWITTER_CSRF_TOKEN=<x_csrf_token>
@@ -84,6 +86,7 @@ TWEET_RESULT_URL               = "https://api.x.com/graphql/SgZWKwvBiOKrSC0QeOGv
 USER_BY_SCREEN_NAME_URL        = "https://x.com/i/api/graphql/laYnJPCAcVo0o6pzcnlVxQ/UserByScreenName"
 USER_TWEETS_URL                = "https://x.com/i/api/graphql/fgsimYxdCfQmTI_dtJsTXw/UserTweets"
 USER_TWEETS_AND_REPLIES_URL    = "https://x.com/i/api/graphql/xdqXQQg4vOBF9Np6VtUsdw/UserTweetsAndReplies"
+BIRDWATCH_FETCH_NOTES_URL      = "https://x.com/i/api/graphql/3G9Ms1POEEiF86dFhV-tTg/BirdwatchFetchNotes"
 GUEST_TOKEN_URL                = "https://api.twitter.com/1.1/guest/activate.json"
 
 # rankingMode: Likes, Recency, Relevance
@@ -206,6 +209,18 @@ USER_TWEETS_AND_REPLIES_FEAT = {"rweb_video_screen_enabled": False, "rweb_cashta
     "responsive_web_grok_community_note_auto_translation_is_enabled": True,
     "responsive_web_enhance_cards_enabled": False}
 
+BIRDWATCH_FETCH_NOTES_FEAT = {
+    "responsive_web_birdwatch_media_notes_enabled": True,
+    "responsive_web_birdwatch_url_notes_enabled": True,
+    "responsive_web_birdwatch_translation_enabled": True,
+    "responsive_web_birdwatch_fast_notes_badge_enabled": True,
+    "responsive_web_graphql_timeline_navigation_enabled": True,
+    "rweb_tipjar_consumption_enabled": True,
+    "responsive_web_graphql_exclude_directive_enabled": True,
+    "verified_phone_label_enabled": True,
+    "responsive_web_graphql_skip_user_profile_image_extensions_enabled": True,
+}
+
 def open_with_viewer(path, viewer):
     """Open *path* with the configured viewer command.
 
@@ -317,6 +332,55 @@ def fetch_tweet_result(tweet_id, headers):
         "features":  json.dumps(TWEET_RESULT_FEAT),
         "fieldToggles": json.dumps(TWEET_RESULT_FTOG),
     })
+
+def fetch_birdwatch_notes(tweet_id, headers):
+    """Hit BirdwatchFetchNotes for *tweet_id*. Returns every note ever
+    proposed for the tweet (helpful, not-helpful, and still-awaiting-ratings),
+    split into 'misleading_birdwatch_notes' and 'not_misleading_birdwatch_notes'
+    groups -- this is a superset of whatever single note (if any) X is
+    currently showing via birdwatch_pivot on the tweet itself."""
+    return _req(BIRDWATCH_FETCH_NOTES_URL, headers, {
+        "variables": json.dumps({"tweet_id": tweet_id}),
+        "features":  json.dumps(BIRDWATCH_FETCH_NOTES_FEAT),
+    })
+
+_BW_STATUS_RANK = {"CurrentlyRatedHelpful": 0, "NeedsMoreRatings": 1}  # everything else (e.g. CurrentlyRatedNotHelpful) ranks last
+
+def parse_birdwatch_fetch_notes(data):
+    """Flatten a BirdwatchFetchNotes response into a list of note dicts:
+    {text, entities, rating_status, shown, is_misleading, created_at}.
+
+    'shown' mirrors whether X is currently surfacing the note on the tweet
+    itself (rating_status == CurrentlyRatedHelpful); everything else is a
+    proposed/awaiting-ratings note that only this tool is surfacing.
+
+    Order: the whole misleading_birdwatch_notes group first, then the whole
+    not_misleading_birdwatch_notes group -- the two are never interleaved.
+    Within each group, notes are ranked helpful-first, then awaiting-ratings,
+    then not-helpful, newest first within each tier (the API doesn't expose
+    a per-note vote tally, only the *author's* lifetime stats, so rating
+    tier + recency is the closest available proxy for 'top-voted')."""
+    result = ((data.get("data") or {}).get("tweet_result_by_rest_id") or {}).get("result") or {}
+    if isinstance(result.get("tweet"), dict):  # some responses nest one level deeper
+        result = result["tweet"]
+
+    out = []
+    for group, is_misleading in (("misleading_birdwatch_notes", True),
+                                  ("not_misleading_birdwatch_notes", False)):
+        for n in (result.get(group) or {}).get("notes", []):
+            summary = (n.get("data_v1") or {}).get("summary", {})
+            out.append({
+                "text":          summary.get("text", ""),
+                "entities":      summary.get("entities", []),
+                "rating_status": n.get("rating_status", ""),
+                "shown":         n.get("rating_status") == "CurrentlyRatedHelpful",
+                "is_misleading": is_misleading,
+                "created_at":    n.get("created_at", 0),
+            })
+    out.sort(key=lambda n: (0 if n["is_misleading"] else 1,
+                             _BW_STATUS_RANK.get(n["rating_status"], 2),
+                             -n["created_at"]))
+    return out
 
 def _quote_chain_has_stub(qt):
     """True if *qt* (a parsed quoted-tweet dict, possibly nested) contains an
@@ -1385,6 +1449,7 @@ SHARED_CSS = """
 .quote-stub-link { display: flex; align-items: center; gap: 5px; font-size: 13px; color: var(--accent); text-decoration: none; }
 .quote-stub-link:hover { text-decoration: underline; }
 .birdwatch { border: 1px solid var(--border); border-radius: 10px; margin: 6px 0; background: var(--bw-bg); overflow: hidden; }
+.birdwatch.proposed { border-style: dashed; opacity: 0.92; }
 .community-note-header { background-color: var(--bg-hover); font-weight: 700; font-size: 13px; padding: 6px 10px 8px; display: flex; align-items: center; gap: 12px; color: var(--fg); }
 .community-note-header .icon-container { flex-shrink: 0; color: var(--accent); }
 .community-note-text { font-size: 13px; color: var(--fg); white-space: pre-line; padding: 6px 10px 10px; }
@@ -1508,37 +1573,63 @@ def _trans_label_html(lang_name):
         f'Translated from {lang_name}</div>'
     )
 
-def _birdwatch_html(t):
-    """Return a Community Note box for a parsed tweet dict, or empty string.
-    Shared by the focal/parent tweet path and quote_block_html, since a
-    quoted tweet can carry its own birdwatch note independent of the
-    tweet quoting it."""
-    if not t.get("birdwatch"):
-        return ""
-    bw_text = t["birdwatch"]
-    ents = [e for e in t.get("birdwatch_ents", [])
-            if e.get("fromIndex") is not None and e.get("toIndex") is not None]
+def _birdwatch_note_html(text, entities, shown=True, is_misleading=True):
+    """Render a single Community Note box from raw note text + entities.
+    Shared by the tweet's official birdwatch_pivot note and by notes fetched
+    via --with-note/--with-notes (BirdwatchFetchNotes). Notes that aren't
+    currently shown on Twitter (rating_status != CurrentlyRatedHelpful) are
+    labelled 'Proposed' and rendered with a dashed border so they're not
+    mistaken for X's own verdict; among proposed notes, ones from the
+    not_misleading_birdwatch_notes group get an extra '- Not Misleading'
+    suffix so they're not confused with notes proposing the tweet IS
+    misleading."""
+    ents = [e for e in entities if e.get("fromIndex") is not None and e.get("toIndex") is not None]
     ents.sort(key=lambda e: e["fromIndex"], reverse=True)
     for e in ents:
         start, end = e["fromIndex"], e["toIndex"]
         ref = e.get("ref", {})
         href = ref.get("url", "")
-        display = bw_text[start:end]
+        display = text[start:end]
         if "help.x.com" in href or "help.x.com" in display:
-            bw_text = bw_text[:start] + bw_text[end:]
+            text = text[:start] + text[end:]
             continue
         if href:
             # short 'display' urls are snippets
-            bw_text = bw_text[:start] + f'<a href="{href}">{display}</a>' + bw_text[end:]
+            text = text[:start] + f'<a href="{href}">{display}</a>' + text[end:]
             # full urls are wrapped in t.co links, to enable we need to
             # HEAD each url, might be too much overhead for birdwatch
             # cards.
             # todo: resolve_url() on these
-            #bw_text = bw_text[:start] + f'<a href="{href}">{href}</a>' + bw_text[end:]
-    return f'''<div class="birdwatch">
-          <div class="community-note-header"><span class="icon-container">{icon_svg("group", 13, "var(--accent)")}</span> Community Note</div>
-          <div class="community-note-text">{bw_text}</div>
+            #text = text[:start] + f'<a href="{href}">{href}</a>' + text[end:]
+    if shown:
+        label = "Community Note"
+    elif is_misleading:
+        label = "Proposed Community Note"
+    else:
+        label = "Proposed Community Note - Not Misleading"
+    cls = "birdwatch" if shown else "birdwatch proposed"
+    return f'''<div class="{cls}">
+          <div class="community-note-header"><span class="icon-container">{icon_svg("group", 13, "var(--accent)")}</span> {label}</div>
+          <div class="community-note-text">{text}</div>
         </div>'''
+
+def _birdwatch_html(t):
+    """Return Community Note box(es) for a parsed tweet dict, or empty string.
+    Shared by the focal/parent tweet path and quote_block_html, since a
+    quoted tweet can carry its own birdwatch note independent of the
+    tweet quoting it. Renders the tweet's official (currently-shown) note
+    first, followed by any extra notes attached via --with-note/--with-notes:
+    misleading-group notes first (already ranked top-first by
+    parse_birdwatch_fetch_notes), then not-misleading-group notes, each
+    flagged 'Proposed' unless independently CurrentlyRatedHelpful."""
+    parts = []
+    if t.get("birdwatch"):
+        parts.append(_birdwatch_note_html(t["birdwatch"], t.get("birdwatch_ents", []), shown=True))
+    for n in t.get("proposed_notes") or []:
+        if n["shown"] and n["text"] == t.get("birdwatch"):
+            continue  # same note X already surfaces via birdwatch_pivot, don't duplicate
+        parts.append(_birdwatch_note_html(n["text"], n["entities"], shown=n["shown"], is_misleading=n["is_misleading"]))
+    return "".join(parts)
 
 def quote_block_html(qt, depth=0):
     if not qt: return ""
@@ -2155,6 +2246,10 @@ async def _main():
                    help="Append top N replies (by likes) below focal tweet (1-20)")
     p.add_argument("--no-nested-quotes", action="store_true", default=_b("no_nested_quotes"),
                    help="Don't fetch/render a 'quote of a quote' (the quoted tweet's own quoted tweet); shows a plain link instead")
+    p.add_argument("--with-note",  action="store_true", default=_b("with_note"),
+                   help="Fetch the top-voted MISLEADING Community Note via BirdwatchFetchNotes, even if not yet shown on Twitter (labelled 'Proposed' if so)")
+    p.add_argument("--with-notes", action="store_true", default=_b("with_notes"),
+                   help="Like --with-note, but show every proposed Community Note (misleading and not-misleading) for the tweet")
     p.add_argument("--no-retina",  action="store_true", default=_b("no_retina"), help="Generate a 50%% smaller image")
     p.add_argument("--guest",      action="store_true", default=_b("guest"), help="Guest mode (no account needed)")
     p.add_argument("--with-replies", action=argparse.BooleanOptionalAction,
@@ -2322,6 +2417,24 @@ async def _main():
 
     tweet_id = tweets[-1]["id"]
     focal = tweets[-1]
+
+    if args.with_note or args.with_notes:
+        _bw_headers = resolution_headers(args, headers)
+        if _bw_headers:
+            try:
+                bw_data = fetch_birdwatch_notes(focal["id"], _bw_headers)
+                all_notes = parse_birdwatch_fetch_notes(bw_data)
+                if args.with_notes:
+                    focal["proposed_notes"] = all_notes
+                else:
+                    misleading = [n for n in all_notes if n["is_misleading"]]
+                    if misleading:
+                        focal["proposed_notes"] = [misleading[0]]
+            except Exception as e:
+                if not args.quiet:
+                    print(f"Warning: couldn't fetch birdwatch notes for {focal['id']}: {e}", file=sys.stderr)
+        elif not args.quiet:
+            print("Note: --with-note/--with-notes needs auth or guest access; skipping.", file=sys.stderr)
 
     if args.trans:
         raw = args.trans.strip()
