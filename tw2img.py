@@ -16,12 +16,12 @@ Notes:
     @username 3 out.png  same, saves to out.png
     --with-replies       also include own replies in @user timeline (auth only, opt-in)
     --last-reply         for reply threads: show only immediate parent + focal tweet
-    --top-reply          append the top reply (by likes) below the focal tweet
-    --top-replies N      append top N replies (by likes) below focal tweet (1-20)
-    --no-nested-quotes   don't fetch a quoted tweet's own quoted tweet (shown as a link instead)
-    --with-note          add the top-voted proposed MISLEADING Community Note (labelled 'Proposed' if not yet shown on Twitter)
-    --with-notes         add every proposed Community Note (misleading and not-misleading) for the tweet
-    --guest              for no authentication, won't see conversation context
+    --top-reply           append the top reply (by likes) below the focal tweet
+    --top-replies N       append top N replies (by likes) below focal tweet (1-20)
+    --no-nested-quotes    don't fetch a quoted tweet's own quoted tweet (shown as a link instead)
+    --with-note            add the top-voted proposed MISLEADING Community Note (labelled 'Proposed' if not yet shown on Twitter)
+    --with-notes           add every proposed Community Note (misleading and not-misleading) for the tweet
+    --guest for no authentication, won't see conversation context
     --user <screen_name> to fetch latest tweet from user
     export TWITTER_AUTH_TOKEN=<auth_token>
     export TWITTER_CSRF_TOKEN=<x_csrf_token>
@@ -1594,13 +1594,10 @@ def _birdwatch_note_html(text, entities, shown=True, is_misleading=True):
             text = text[:start] + text[end:]
             continue
         if href:
-            # short 'display' urls are snippets
-            text = text[:start] + f'<a href="{href}">{display}</a>' + text[end:]
-            # full urls are wrapped in t.co links, to enable we need to
-            # HEAD each url, might be too much overhead for birdwatch
-            # cards.
-            # todo: resolve_url() on these
-            #text = text[:start] + f'<a href="{href}">{href}</a>' + text[end:]
+            # ref.url is always a t.co shortlink; the text slice at
+            # [fromIndex:toIndex] is already the expanded destination URL,
+            # so use it as both the visible text and the href.
+            text = text[:start] + f'<a href="{display}">{display}</a>' + text[end:]
     if shown:
         label = "Community Note"
     elif is_misleading:
