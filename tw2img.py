@@ -431,10 +431,11 @@ def resolution_headers(args, headers):
     """Best-effort headers for resolving nested quoted tweets: reuse whatever
     headers were already built for the main fetch, otherwise build auth
     headers from --auth-token/--csrf-token, otherwise fall back to a fresh
-    guest token (no credentials needed). Returns None if nothing works."""
+    guest token. In --guest mode auth headers are never used. Returns None
+    if nothing works."""
     if headers:
         return headers
-    if args.auth_token and args.csrf_token:
+    if not getattr(args, "guest", False) and args.auth_token and args.csrf_token:
         return auth_headers(args.auth_token, args.csrf_token)
     try:
         return guest_headers(get_guest_token())
@@ -2438,22 +2439,26 @@ async def _main():
     focal = tweets[-1]
 
     if args.with_note or args.with_notes:
-        _bw_headers = resolution_headers(args, headers)
-        if _bw_headers:
-            try:
-                bw_data = fetch_birdwatch_notes(focal["id"], _bw_headers)
-                all_notes = parse_birdwatch_fetch_notes(bw_data)
-                if args.with_notes:
-                    focal["proposed_notes"] = all_notes
-                else:
-                    misleading = [n for n in all_notes if n["is_misleading"]]
-                    if misleading:
-                        focal["proposed_notes"] = [misleading[0]]
-            except Exception as e:
-                if not args.quiet:
-                    print(f"Warning: couldn't fetch birdwatch notes for {focal['id']}: {e}", file=sys.stderr)
-        elif not args.quiet:
-            print("Note: --with-note/--with-notes needs auth or guest access; skipping.", file=sys.stderr)
+        if args.guest:
+            if not args.quiet:
+                print("Note: --with-note/--with-notes requires auth; skipping in --guest mode.", file=sys.stderr)
+        else:
+            _bw_headers = resolution_headers(args, headers)
+            if _bw_headers:
+                try:
+                    bw_data = fetch_birdwatch_notes(focal["id"], _bw_headers)
+                    all_notes = parse_birdwatch_fetch_notes(bw_data)
+                    if args.with_notes:
+                        focal["proposed_notes"] = all_notes
+                    else:
+                        misleading = [n for n in all_notes if n["is_misleading"]]
+                        if misleading:
+                            focal["proposed_notes"] = [misleading[0]]
+                except Exception as e:
+                    if not args.quiet:
+                        print(f"Warning: couldn't fetch birdwatch notes for {focal['id']}: {e}", file=sys.stderr)
+            elif not args.quiet:
+                print("Note: --with-note/--with-notes needs auth; skipping.", file=sys.stderr)
 
     if args.trans:
         raw = args.trans.strip()
