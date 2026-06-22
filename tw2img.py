@@ -89,6 +89,12 @@ USER_TWEETS_AND_REPLIES_URL    = "https://x.com/i/api/graphql/xdqXQQg4vOBF9Np6Vt
 BIRDWATCH_FETCH_NOTES_URL      = "https://x.com/i/api/graphql/3G9Ms1POEEiF86dFhV-tTg/BirdwatchFetchNotes"
 GUEST_TOKEN_URL                = "https://api.twitter.com/1.1/guest/activate.json"
 
+# Base URL used when building @mention / #hashtag / tweet hyperlinks.
+# Override via config: nitter_url = https://nitter.net (xcancel.com, etc)
+# Set to empty string to disable hyperlinking of mentions/hashtags entirely.
+# This is ONLY FOR HTML rendered output.
+_TWEET_BASE_URL = "https://x.com"
+
 # rankingMode: Likes, Recency, Relevance
 TWEET_DETAIL_VARS   = lambda id: {"focalTweetId": id, "with_rux_injections": True,
     "rankingMode": "Likes", "includePromotedContent": False, "withCommunity": True,
@@ -1106,8 +1112,12 @@ def linkify(text, entities):
         text = text.replace(u["url"], f'<a href="{u["expanded_url"]}">{u["display_url"]}</a>')
     for m in entities.get("media", []):
         text = text.replace(m["url"], "")
-    text = re.sub(r"#(\w+)", r'<a href="#">#\1</a>', text)
-    text = re.sub(r"@(\w+)", r'<a href="#">@\1</a>', text)
+    if _TWEET_BASE_URL:
+        text = re.sub(r"#(\w+)", lambda m: f'<a href="{_TWEET_BASE_URL}/hashtag/{m.group(1)}">#{m.group(1)}</a>', text)
+        text = re.sub(r"@(\w+)", lambda m: f'<a href="{_TWEET_BASE_URL}/{m.group(1)}">@{m.group(1)}</a>', text)
+    else:
+        text = re.sub(r"#(\w+)", r"#\1", text)
+        text = re.sub(r"@(\w+)", r"@\1", text)
     return text.strip()
 
 def strip_all_lead_mentions(text, entities):
@@ -1598,6 +1608,12 @@ def _birdwatch_note_html(text, entities, shown=True, is_misleading=True):
             # [fromIndex:toIndex] is already the expanded destination URL,
             # so use it as both the visible text and the href.
             text = text[:start] + f'<a href="{display}">{display}</a>' + text[end:]
+    # Birdwatch entity lists only carry TimelineUrl entries; bare @mentions
+    # and #hashtags in note text are untracked, so linkify them here using
+    # the same base URL as the main tweet body.
+    if _TWEET_BASE_URL:
+        text = re.sub(r"@(\w+)", lambda m: f'<a href="{_TWEET_BASE_URL}/{m.group(1)}">@{m.group(1)}</a>', text)
+        text = re.sub(r"#(\w+)", lambda m: f'<a href="{_TWEET_BASE_URL}/hashtag/{m.group(1)}">#{m.group(1)}</a>', text)
     if shown:
         label = "Community Note"
     elif is_misleading:
@@ -1945,7 +1961,7 @@ def tweet_row_html(t, is_parent=False, no_source=False, is_reply=False):
 
     replying = ""
     if reply_to_sns and not is_parent:
-        links = " ".join([f'<a href="#">@{sn}</a>' for sn in reply_to_sns])
+        links = " ".join([f'<a href="{_TWEET_BASE_URL}/{sn}">@{sn}</a>' for sn in reply_to_sns])
         replying = f'<div class="replying-to">Replying to {links}</div>'
 
     card_block = card_html(t.get("card")) if not t.get("ext_entities", {}).get("media") else ""
@@ -2208,6 +2224,12 @@ async def _main():
     _pre.add_argument("-c", "--config", default=None)
     _pre_args, _ = _pre.parse_known_args()
     conf = load_config(extra_path=_pre_args.config)
+
+    # Allow the nitter_url config key to redirect @mention / #hashtag / tweet
+    # hyperlinks to a self-hosted Nitter instance. Defaults to x.com.
+    # Set nitter_url = (empty) to disable mention/hashtag hyperlinking.
+    global _TWEET_BASE_URL
+    _TWEET_BASE_URL = conf.get("nitter_url", "https://x.com").rstrip("/")
 
     def _b(key):
         """Return bool default from conf, defaulting to False."""
