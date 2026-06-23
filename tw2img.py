@@ -90,7 +90,7 @@ BIRDWATCH_FETCH_NOTES_URL      = "https://x.com/i/api/graphql/3G9Ms1POEEiF86dFhV
 GUEST_TOKEN_URL                = "https://api.twitter.com/1.1/guest/activate.json"
 
 # Base URL used when building @mention / #hashtag / tweet hyperlinks.
-# Override via config: nitter_url = https://nitter.net (xcancel.com, etc)
+# Override via config: nitter_url = https://nitter.example.com
 # Set to empty string to disable hyperlinking of mentions/hashtags entirely.
 # This is ONLY FOR HTML rendered output.
 _TWEET_BASE_URL = "https://x.com"
@@ -703,6 +703,9 @@ def _parse_tweet_result(result, user_parser):
     bw = result.get("birdwatch_pivot") or {}
     bw_note = bw.get("note", {}).get("text") or bw.get("subtitle", {}).get("text") or ""
     bw_ents = bw.get("note", {}).get("entities") or bw.get("subtitle", {}).get("entities") or []
+    # has_birdwatch_notes: true in TweetResultByRestId (guest) and TweetDetail when
+    # the tweet has any Community Note activity (proposed or shown).
+    has_birdwatch_notes = bool(result.get("has_birdwatch_notes")) or bool(bw)
 
     card = None
     raw_card = (result.get("card") or rt_result.get("card") or {}).get("legacy", {})
@@ -864,6 +867,7 @@ def _parse_tweet_result(result, user_parser):
         "card":            card,
         "birdwatch":       bw_note,
         "birdwatch_ents":  bw_ents,
+        "has_birdwatch_notes": has_birdwatch_notes,
         "broadcast_card":  broadcast_card,
         "grok_question":   grok_question,
         "grok_answer":     grok_answer,
@@ -1991,12 +1995,14 @@ def tweet_row_html(t, is_parent=False, no_source=False, is_reply=False):
         </div>
         '''
     src = "" if no_source else f'<span class="source">{t["source"]}</span>'
+    bw_icon = f'<span class="stat">{icon_svg("group", 13, grey)}</span>' if t.get("has_birdwatch_notes") else ""
     stats = f"""<div class="stats">
       <span class="stat">{icon_svg("comment", 13, grey)} {fmt(t["reply_count"])}</span>
       <span class="stat">{icon_svg("retweet", 13, grey)} {fmt(t["retweet_count"])}</span>
       <span class="stat">{icon_svg("quote",   13, grey)} {fmt(t["quote_count"])}</span>
       <span class="stat">{icon_svg("heart",   13, grey)} {fmt(t["like_count"])}</span>
       <span class="stat">{icon_svg("views",   13, grey)} {fmt(t["view_count"])}</span>
+      {bw_icon}
       {src}
     </div>"""
     if is_parent or is_reply:
@@ -2439,7 +2445,9 @@ async def _main():
     focal = tweets[-1]
 
     if args.with_note or args.with_notes:
-        if args.guest:
+        if not focal.get("has_birdwatch_notes"):
+            pass  # tweet has no note activity; skip the extra request entirely
+        elif args.guest:
             if not args.quiet:
                 print("Note: --with-note/--with-notes requires auth; skipping in --guest mode.", file=sys.stderr)
         else:
