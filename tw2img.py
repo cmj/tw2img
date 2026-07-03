@@ -1350,7 +1350,7 @@ body {
     --link:    #80CEFF;
     --acc:     #2B608A;
     --play:    #3B5F78;
-    --qt-bg:   #1e2732;
+    --qt-bg:   #222222;
     --bw-bg:   #1c1f23;
     --bw-fg:   #5a6472;
     --bg-hover: #22262b;
