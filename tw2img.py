@@ -44,6 +44,10 @@ Config file (INI format, [tw2img] section):
       viewer    = xdg-open          # let the OS pick the right app
       view_html = true              # always auto-save + open HTML alongside the PNG
     Use {} as a placeholder for the filename; otherwise the path is appended.
+
+    Header display:
+      bird_icon = true              # show the classic Twitter bird glyph top-right
+    
     --view-html saves <name>.html next to the PNG and opens it in the browser
       (uses --viewer if set, otherwise xdg-open). If no PNG is otherwise needed
       (no --view, no --imgur, no explicit output path), Playwright is not required.
@@ -960,6 +964,7 @@ def parse_tweet_result_single(data):
     return [_parse_tweet_result(result, _parse_user)]
 
 _FULL_STATS = False   # set to True by --full-stats / config full_stats=true
+_BIRD_ICON  = False   # set to True by --bird-icon / config bird_icon=true
 
 def fmt(n):
     n = int(n or 0)
@@ -1299,6 +1304,20 @@ def icon_svg(name, size=13, color="currentColor"):
     return (f'<svg width="{w:.1f}" height="{size}" viewBox="0 150 {adv} 850" '
             f'xmlns="http://www.w3.org/2000/svg" style="display:inline-block;vertical-align:middle;flex-shrink:0">'
             f'<g transform="scale(1,-1) translate(0,-850)"><path d="{d}" fill="{color}"/></g></svg>')
+
+def bird_svg(size=16, color="var(--grey)"):
+    """Classic Twitter 'bird' glyph, used in the header top-right slot in place of the
+    relative timestamp when --bird-icon / config bird_icon=true is set."""
+    d = ("M23.643 4.937c-.835.37-1.732.62-2.675.733.962-.576 1.7-1.49 2.048-2.578-.9.534-1.897.922-2.958 "
+         "1.13-.85-.904-2.06-1.47-3.4-1.47-2.572 0-4.658 2.086-4.658 4.66 0 .364.042.718.12 "
+         "1.06-3.873-.195-7.304-2.05-9.602-4.868-.4.69-.63 1.49-.63 2.342 0 1.616.823 3.043 2.072 "
+         "3.878-.764-.025-1.482-.234-2.11-.583v.06c0 2.257 1.605 4.14 3.737 4.568-.392.106-.803.162-1.227 "
+         ".162-.3 0-.593-.028-.877-.082.593 1.85 2.313 3.198 4.352 3.234-1.595 1.25-3.604 1.995-5.786 "
+         "1.995-.376 0-.747-.022-1.112-.065 2.062 1.323 4.51 2.093 7.14 2.093 8.57 0 13.255-7.098 "
+         "13.255-13.254 0-.2-.005-.402-.014-.602.91-.658 1.7-1.477 2.323-2.41z")
+    return (f'<svg width="{size}" height="{size}" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg" '
+            f'style="display:inline-block;vertical-align:middle;flex-shrink:0">'
+            f'<path fill="{color}" d="{d}"/></svg>')
 
 def verified_svg(verified_type, is_blue):
     if is_blue and not verified_type:   fill, stroke = "#1d9bf0", "white"
@@ -1951,8 +1970,20 @@ def tweet_row_html(t, is_parent=False, no_source=False, is_reply=False):
     attr_block  = _attribution_html(t.get("media_attribution"))
     is_ai       = t.get("is_ai_media", False)
     media_block = (attr_block + media_html(t["ext_entities"], is_ai=is_ai)) if attr_block else media_html(t["ext_entities"], is_ai=is_ai)
-    time_str    = rel_time(t["created_at"])
+    is_focal    = not is_parent and not is_reply
+    rel_str     = rel_time(t["created_at"])
     row_class   = "tweet-row" + (" top-reply" if is_reply else ("" if is_parent else " focal"))
+
+    if _BIRD_ICON:
+        bird_color   = "#1DA1F2" if is_focal else "var(--grey)"
+        corner_html  = (f'<span class="tweet-bird" style="margin-left:auto;flex-shrink:0;'
+                         f'display:inline-flex;align-items:center;">{bird_svg(15, bird_color)}</span>')
+        inline_time  = "" if is_focal else (
+            f'<span class="tweet-time-inline" style="color:var(--grey);font-size:14px;">'
+            f'&nbsp;\u00b7&nbsp;{rel_str}</span>')
+    else:
+        corner_html  = f'<span class="tweet-time">{rel_str}</span>'
+        inline_time  = ""
 
     rt_by = t.get("rt_by_user")
     rt_header = ""
@@ -2015,9 +2046,9 @@ def tweet_row_html(t, is_parent=False, no_source=False, is_reply=False):
   <div class="right-col">
     <div class="tweet-header">
       <div class="tweet-header-left">
-        <div style="display:flex;align-items:center;"><span class="fullname">{u["name"]}</span>{vicon}<span class="username">@{u["screen_name"]}</span></div>{plabel}
+        <div style="display:flex;align-items:center;"><span class="fullname">{u["name"]}</span>{vicon}<span class="username">@{u["screen_name"]}</span>{inline_time}</div>{plabel}
       </div>
-      <span class="tweet-time">{time_str}</span>
+      {corner_html}
     </div>
     {replying}
     {_trans_label_html(t.get("translated_from"))}
@@ -2039,7 +2070,7 @@ def tweet_row_html(t, is_parent=False, no_source=False, is_reply=False):
       <div class="focal-header-top"><span class="fullname">{u["name"]}</span>{vicon}</div>
       <div class="focal-header-bottom"><span class="username">@{u["screen_name"]}</span>{plabel}</div>
     </div>
-    <span class="tweet-time" style="margin-left:auto">{time_str}</span>
+    <span style="margin-left:auto;align-self:flex-start;margin-top:2px;display:inline-flex;align-items:center;">{corner_html}</span>
   </div>
   <div class="focal-body">
     {replying}
@@ -2305,6 +2336,8 @@ async def _main():
                    help="Append imgur URL + delete link to FILE after each upload (e.g. ~/tw2imgur_urls)")
     p.add_argument("--full-stats", action="store_true", default=_b("full_stats"),
                    help="Show full unabbreviated stat numbers (e.g. 12,345 instead of 12.3K)")
+    p.add_argument("--bird-icon",  action="store_true", default=_b("bird_icon"),
+                   help="Show the classic Twitter 'bird' glyph in the header's top-right slot")
     p.add_argument("--trans",      default=conf.get("trans") or None, metavar="[SOURCE:]TARGET",
                    help="Translate tweet text before rendering. "
                         "Format: TARGET (e.g. --trans en) to auto-detect source, or "
@@ -2331,6 +2364,10 @@ async def _main():
     # Apply full-stats flag globally so fmt() picks it up
     global _FULL_STATS
     _FULL_STATS = args.full_stats
+
+    # Apply bird-icon flag globally so tweet_row_html() picks it up
+    global _BIRD_ICON
+    _BIRD_ICON = args.bird_icon
 
     tweet_index = 1
     if args.input and re.fullmatch(r'@[A-Za-z0-9_]{1,15}', args.input):
