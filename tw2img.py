@@ -417,7 +417,8 @@ def resolve_quote_chain(qt, headers, depth=0, max_depth=3, quiet=True):
             if result.get("__typename") == "TweetTombstone":
                 tombstone_text = (result.get("tombstone", {}).get("text", {}).get("text")
                                   or "This tweet is unavailable.")
-                return {"__tombstone": True, "screen_name": qt.get("screen_name", ""), "text": tombstone_text}
+                return {"__tombstone": True, "screen_name": qt.get("screen_name", ""), "text": tombstone_text,
+                        "permalink": qt.get("permalink", "")}
             resolved = _parse_tweet_result(result, _parse_user)
             if resolved:
                 resolved["quoted"] = resolve_quote_chain(resolved.get("quoted"), headers, depth + 1, max_depth, quiet)
@@ -656,16 +657,34 @@ def _parse_tweet_result(result, user_parser):
             expanded = permalink.get("expanded", "")
             m_sn = re.search(r"(?:twitter|x)\.com/([^/]+)/status", expanded)
             sn = m_sn.group(1) if m_sn else ""
-            quoted = {"__tombstone": True, "screen_name": sn, "text": tombstone_text}
+            quoted = {"__tombstone": True, "screen_name": sn, "text": tombstone_text, "permalink": expanded,
+                      "reason": "unavailable"}
         else:
             quoted = _parse_tweet_result(qt_res, user_parser)
+            if quoted and quoted.get("user", {}).get("screen_name") == "unknown":
+                # The tweet itself hydrated, but the author's user data didn't
+                # (e.g. the quoted author has blocked the quoting account) --
+                # X still gives us the tweet id/permalink but no user_results,
+                # so _parse_user's empty-result fallback kicked in. Fall back
+                # to a "blocked" link instead of showing "Unknown".
+                permalink = leg.get("quoted_status_permalink", {})
+                expanded = permalink.get("expanded", "")
+                m_sn = re.search(r"(?:twitter|x)\.com/([^/]+)/status", expanded)
+                sn = m_sn.group(1) if m_sn else ""
+                quoted = {"__tombstone": True, "screen_name": sn, "text": "This tweet is blocked.",
+                          "permalink": expanded, "reason": "blocked"}
     elif leg.get("quoted_status_id_str") and result.get("quoted_status_result") == {}:
-        # Empty result object = tweet was deleted
+        # Empty result object with no error info -- in practice this is what
+        # X returns when the quoted author has blocked the quoting account
+        # (it can also mean the tweet was deleted, but we have no way to
+        # distinguish the two from this shape alone, and blocked is by far
+        # the common case in the wild).
         permalink = leg.get("quoted_status_permalink", {})
         expanded = permalink.get("expanded", "")
         m_sn = re.search(r"(?:twitter|x)\.com/([^/]+)/status", expanded)
         sn = m_sn.group(1) if m_sn else ""
-        quoted = {"__tombstone": True, "screen_name": sn, "text": "This tweet is unavailable."}
+        quoted = {"__tombstone": True, "screen_name": sn, "text": "This tweet is blocked.", "permalink": expanded,
+                  "reason": "blocked"}
     elif leg.get("quoted_status_id_str"):
         # A "quote of a quote": X's API only hydrates one level of
         # quoted_status_result, so a tweet that quotes an already-quoting
@@ -1673,9 +1692,13 @@ def quote_block_html(qt, depth=0):
     if not qt: return ""
     if qt.get("__tombstone"):
         sn = qt.get("screen_name", "")
-        label = f"This tweet from @{sn} is unavailable." if sn else qt.get("text", "This tweet is unavailable.")
+        link = qt.get("permalink", "")
+        reason = qt.get("reason", "unavailable")
+        label = f"This tweet from @{sn} is {reason}." if sn else qt.get("text", "This tweet is unavailable.")
+        inner = f'<a href="{link}" style="color:inherit;text-decoration:none;">{label}</a>' if link else label
+        text_color = "#7b93a8" if reason == "blocked" else "var(--grey)"
         return f'''<div class="quote-block" style="display:flex;align-items:center;justify-content:center;padding:14px 12px;">
-  <span style="color:var(--grey);font-size:14px;">{label}</span>
+  <span style="color:{text_color};font-size:14px;">{inner}</span>
 </div>'''
     if qt.get("__stub"):
         # Nested quote X never hydrated for us (a "quote of a quote") and we
