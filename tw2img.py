@@ -527,7 +527,8 @@ def fetch_nth_tweet_id(user_id, headers, n=1, with_replies=True):
 
 def _parse_user(ur):
     res = ur.get("result", {})
-    if not res: return {"name": "Unknown", "screen_name": "unknown", "avatar_url": ""}
+    if not res: return {"name": "Unknown", "screen_name": "unknown", "avatar_url": "",
+                         "is_blue_verified": False, "verified_type": None, "parody_label": None}
     core = res.get("core", {})
     legacy = res.get("legacy", {})
     name = legacy.get("name") or core.get("name") or res.get("name", "Unknown")
@@ -1690,7 +1691,7 @@ def quote_block_html(qt, depth=0):
 </div>'''
     u    = qt["user"]
     text = linkify(qt["full_text"], qt["entities"])
-    vicon = verified_svg(u["verified_type"], u["is_blue_verified"])
+    vicon = verified_svg(u.get("verified_type"), u.get("is_blue_verified", False))
     time  = rel_time(qt["created_at"])
     media = ""
     mlist = qt["ext_entities"].get("media", [])
@@ -1957,7 +1958,7 @@ def tweet_row_html(t, is_parent=False, no_source=False, is_reply=False):
   </div>
 </div>"""
     u      = t["user"]
-    vicon  = verified_svg(u["verified_type"], u["is_blue_verified"])
+    vicon  = verified_svg(u.get("verified_type"), u.get("is_blue_verified", False))
     plabel = parody_label_html(u.get("parody_label", ""))
     grey   = "var(--grey)"
 
