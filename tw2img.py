@@ -109,6 +109,15 @@ def _nitter_link(url):
         return url
     return re.sub(r"^https?://(?:www\.)?(?:twitter|x)\.com", _TWEET_BASE_URL, url)
 
+def _tweet_permalink(screen_name, tweet_id):
+    """Build a permalink to a tweet under the configured nitter_url base
+    (defaults to nitter.net; see _TWEET_BASE_URL). Returns "" if either
+    piece is missing or hyperlinking has been disabled (nitter_url set to
+    an empty string), so callers can skip wrapping in an <a> tag."""
+    if not _TWEET_BASE_URL or not screen_name or not tweet_id:
+        return ""
+    return f"{_TWEET_BASE_URL}/{screen_name}/status/{tweet_id}"
+
 # rankingMode: Likes, Recency, Relevance
 TWEET_DETAIL_VARS   = lambda id: {"focalTweetId": id, "with_rux_injections": True,
     "rankingMode": "Likes", "includePromotedContent": False, "withCommunity": True,
@@ -648,8 +657,40 @@ def _extract_media_attribution(ext_entities, result=None, rt_result=None):
 
     return None
 
+def _permalink_screen_name(leg):
+    """Extract the screen_name embedded in a quoted_status_permalink's
+    expanded URL -- often the only place it appears when the quoted tweet
+    couldn't be hydrated normally (blocked/suspended/deleted author)."""
+    expanded = leg.get("quoted_status_permalink", {}).get("expanded", "")
+    m = re.search(r"(?:twitter|x)\.com/([^/]+)/status", expanded)
+    return (m.group(1) if m else ""), expanded
+
+def _classify_unavailable(res):
+    """Given a TweetTombstone or TweetUnavailable result object, return
+    (reason, text). reason is a short lowercase word ("suspended",
+    "deleted", "removed", "unavailable") suitable for use in
+    "This Tweet was ... {reason}.", text is a fallback human-readable
+    message for when we don't have a screen_name to build that sentence."""
+    typename = res.get("__typename")
+    if typename == "TweetUnavailable":
+        reason = (res.get("reason") or "unavailable").lower()
+        return reason, f"This Tweet is {reason}."
+    if typename == "TweetTombstone":
+        text = res.get("tombstone", {}).get("text", {}).get("text", "") or "This tweet is unavailable."
+        low = text.lower()
+        if "suspend" in low:
+            reason = "suspended"
+        elif "no longer exist" in low or "delet" in low:
+            reason = "deleted"
+        elif "violat" in low:
+            reason = "removed"
+        else:
+            reason = "unavailable"
+        return reason, text
+    return "unavailable", "This tweet is unavailable."
+
 def _parse_tweet_result(result, user_parser):
-    if not result or result.get("__typename") == "TweetTombstone":
+    if not result or result.get("__typename") in ("TweetTombstone", "TweetUnavailable"):
         return None
     if "tweet" in result and not result.get("legacy"):
         result = result["tweet"]
@@ -660,15 +701,11 @@ def _parse_tweet_result(result, user_parser):
     qt_res = result.get("quoted_status_result", {}).get("result") or \
              result.get("quoted_status_results", {}).get("result")
     if qt_res:
-        if qt_res.get("__typename") == "TweetTombstone":
-            tombstone_text = (qt_res.get("tombstone", {}).get("text", {}).get("text")
-                              or "This tweet is unavailable.")
-            permalink = leg.get("quoted_status_permalink", {})
-            expanded = permalink.get("expanded", "")
-            m_sn = re.search(r"(?:twitter|x)\.com/([^/]+)/status", expanded)
-            sn = m_sn.group(1) if m_sn else ""
+        if qt_res.get("__typename") in ("TweetTombstone", "TweetUnavailable"):
+            reason, tombstone_text = _classify_unavailable(qt_res)
+            sn, expanded = _permalink_screen_name(leg)
             quoted = {"__tombstone": True, "screen_name": sn, "text": tombstone_text, "permalink": expanded,
-                      "reason": "unavailable"}
+                      "reason": reason}
         else:
             quoted = _parse_tweet_result(qt_res, user_parser)
             if quoted and quoted.get("user", {}).get("screen_name") == "unknown":
@@ -677,10 +714,7 @@ def _parse_tweet_result(result, user_parser):
                 # X still gives us the tweet id/permalink but no user_results,
                 # so _parse_user's empty-result fallback kicked in. Fall back
                 # to a "blocked" link instead of showing "Unknown".
-                permalink = leg.get("quoted_status_permalink", {})
-                expanded = permalink.get("expanded", "")
-                m_sn = re.search(r"(?:twitter|x)\.com/([^/]+)/status", expanded)
-                sn = m_sn.group(1) if m_sn else ""
+                sn, expanded = _permalink_screen_name(leg)
                 quoted = {"__tombstone": True, "screen_name": sn, "text": "This tweet is blocked.",
                           "permalink": expanded, "reason": "blocked"}
     elif leg.get("quoted_status_id_str") and result.get("quoted_status_result") == {}:
@@ -689,10 +723,7 @@ def _parse_tweet_result(result, user_parser):
         # (it can also mean the tweet was deleted, but we have no way to
         # distinguish the two from this shape alone, and blocked is by far
         # the common case in the wild).
-        permalink = leg.get("quoted_status_permalink", {})
-        expanded = permalink.get("expanded", "")
-        m_sn = re.search(r"(?:twitter|x)\.com/([^/]+)/status", expanded)
-        sn = m_sn.group(1) if m_sn else ""
+        sn, expanded = _permalink_screen_name(leg)
         quoted = {"__tombstone": True, "screen_name": sn, "text": "This tweet is blocked.", "permalink": expanded,
                   "reason": "blocked"}
     elif leg.get("quoted_status_id_str"):
@@ -912,19 +943,26 @@ def parse_tweet_detail(data, focal_id):
     instr   = data["data"]["threaded_conversation_with_injections_v2"]["instructions"]
     entries = next((i["entries"] for i in instr if i.get("type") == "TimelineAddEntries"), [])
     by_id = {}
-    tombstones = {}  # id -> screen_name extracted from entry id
+    tombstones = {}  # id -> {screen_name, text, reason} extracted from entry id
     for e in entries:
         item   = e.get("content", {}).get("itemContent", {})
         result = item.get("tweet_results", {}).get("result", {})
-        if not result: continue
-        if result.get("__typename") == "TweetTombstone":
-            # entry id like "tweet-1234567" gives us the tweet id
-            entry_id = e.get("entryId", "")
-            m = re.search(r"tweet-(\d+)", entry_id)
-            tid = m.group(1) if m else None
-            if tid:
-                tombstone_text = result.get("tombstone", {}).get("text", {}).get("text", "This tweet is unavailable.")
-                tombstones[tid] = {"__tombstone": True, "id": tid, "text": tombstone_text, "screen_name": ""}
+        entry_id_raw = e.get("entryId", "")
+        m = re.search(r"tweet-(\d+)", entry_id_raw)
+        tid_guess = m.group(1) if m else None
+        if not result:
+            # Entirely empty tweet_results -- no tombstone object at all,
+            # which in practice means the tweet was deleted.
+            if tid_guess:
+                tombstones[tid_guess] = {"__tombstone": True, "id": tid_guess,
+                                          "text": "This Tweet was deleted.", "screen_name": "",
+                                          "reason": "deleted"}
+            continue
+        if result.get("__typename") in ("TweetTombstone", "TweetUnavailable"):
+            if tid_guess:
+                reason, tombstone_text = _classify_unavailable(result)
+                tombstones[tid_guess] = {"__tombstone": True, "id": tid_guess, "text": tombstone_text,
+                                          "screen_name": "", "reason": reason}
             continue
         entry_id = (result.get("legacy") or result.get("tweet", {}).get("legacy") or {}).get("id_str") or result.get("rest_id")
         t = _parse_tweet_result(result, _parse_user)
@@ -935,6 +973,14 @@ def parse_tweet_detail(data, focal_id):
 
     chain = []
     cur   = by_id.get(focal_id)
+    if cur is None and focal_id:
+        # The focal tweet itself couldn't be hydrated (deleted, suspended,
+        # or an invalid/typo'd id) -- show a tombstone placeholder for it
+        # instead of erroring out, same as we do for unavailable parents.
+        if focal_id in tombstones:
+            return [tombstones[focal_id]]
+        return [{"__tombstone": True, "id": focal_id, "text": "This Tweet could not be found.",
+                 "screen_name": "", "reason": "unavailable"}]
     while cur:
         chain.insert(0, cur)
         parent_id = cur["in_reply_to_id"]
@@ -950,7 +996,7 @@ def parse_tweet_detail(data, focal_id):
             elif cur.get("in_reply_to_sn"):
                 chain.insert(0, {"__tombstone": True, "id": parent_id,
                                   "screen_name": cur["in_reply_to_sn"],
-                                  "text": "This tweet is unavailable."})
+                                  "text": "This Tweet was deleted.", "reason": "deleted"})
             break
         cur = next_cur
     return chain if chain else list(by_id.values())
@@ -978,7 +1024,7 @@ def parse_top_reply(data, focal_id, count=1):
         for item in items:
             result = (item.get("item", {}).get("itemContent", {})
                          .get("tweet_results", {}).get("result", {}))
-            if not result or result.get("__typename") == "TweetTombstone":
+            if not result or result.get("__typename") in ("TweetTombstone", "TweetUnavailable"):
                 continue
             t = _parse_tweet_result(result, _parse_user)
             if t:
@@ -988,9 +1034,9 @@ def parse_top_reply(data, focal_id, count=1):
 
 def parse_tweet_result_single(data):
     result = data["data"]["tweetResult"]["result"]
-    if result.get("__typename") == "TweetTombstone":
-        msg = result.get("tombstone", {}).get("text", {}).get("text", "This tweet is unavailable.")
-        sys.exit(f"Error: {msg}")
+    if result.get("__typename") in ("TweetTombstone", "TweetUnavailable"):
+        reason, msg = _classify_unavailable(result)
+        return [{"__tombstone": True, "id": result.get("rest_id"), "text": msg, "screen_name": "", "reason": reason}]
     return [_parse_tweet_result(result, _parse_user)]
 
 _FULL_STATS = False   # set to True by --full-stats / config full_stats=true
@@ -1019,6 +1065,15 @@ def abs_time(created_at):
     dt = datetime.strptime(created_at, "%a %b %d %H:%M:%S +0000 %Y")
     return dt.strftime("%b %d, %Y · %I:%M %p UTC").replace(" 0", " ")
 
+def _linked_abs_time(t):
+    """Render the focal tweet's absolute timestamp as a permalink, same as
+    a real Nitter/X page would, without altering its existing text color."""
+    label = abs_time(t.get("created_at"))
+    link = _tweet_permalink(t.get("user", {}).get("screen_name"), t.get("id"))
+    if link:
+        return f'<a href="{link}" style="color:inherit;text-decoration:none;">{label}</a>'
+    return label
+
 def format_tweet_line(tweet, nsfw=False, birdwatch=False):
     """Return a single summary line for a parsed tweet dict.
 
@@ -1030,6 +1085,12 @@ def format_tweet_line(tweet, nsfw=False, birdwatch=False):
     """
     RESET  = "\033[0m"
     RED    = "\033[31m"
+
+    if tweet.get("__tombstone"):
+        sn = tweet.get("screen_name", "")
+        reason = tweet.get("reason", "unavailable")
+        label = f"This Tweet was from @{sn} was {reason}." if sn else (tweet.get("text") or f"This Tweet was {reason}.")
+        return label
 
     user = tweet["user"]
     sn   = user["screen_name"]
@@ -1707,8 +1768,8 @@ def quote_block_html(qt, depth=0):
         label = f"This tweet from @{sn} is {reason}." if sn else qt.get("text", "This tweet is unavailable.")
         inner = f'<a href="{link}" style="color:inherit;text-decoration:none;">{label}</a>' if link else label
         text_color = "#7b93a8" if reason == "blocked" else "var(--grey)"
-        return f'''<div class="quote-block" style="display:flex;align-items:center;justify-content:center;padding:14px 12px;">
-  <span style="color:{text_color};font-size:14px;">{inner}</span>
+        return f'''<div class="quote-block" style="display:flex;align-items:center;justify-content:center;padding:16px 14px;">
+  <span style="color:{text_color};font-size:15px;line-height:1.4;text-align:center;">{inner}</span>
 </div>'''
     if qt.get("__stub"):
         # Nested quote X never hydrated for us (a "quote of a quote") and we
@@ -1726,6 +1787,9 @@ def quote_block_html(qt, depth=0):
     text = linkify(qt["full_text"], qt["entities"])
     vicon = verified_svg(u.get("verified_type"), u.get("is_blue_verified", False))
     time  = rel_time(qt["created_at"])
+    time_link = _tweet_permalink(u.get("screen_name"), qt.get("id"))
+    if time_link:
+        time = f'<a href="{time_link}" style="color:inherit;text-decoration:none;">{time}</a>'
     media = ""
     mlist = qt["ext_entities"].get("media", [])
     if mlist:
@@ -1978,17 +2042,17 @@ def card_html(card):
 
 def tweet_row_html(t, is_parent=False, no_source=False, is_reply=False):
     if t.get("__tombstone"):
-        sn = t.get("screen_name", "")
-        label = f"This tweet from @{sn} is unavailable." if sn else "This tweet is unavailable."
-        line = "<div class='thread-line'></div>" if is_parent else ""
-        return f"""<div class="tweet-row">
-  <div class="left-col">
-    <svg width="46" height="46" viewBox="0 0 46 46" xmlns="http://www.w3.org/2000/svg"><circle cx="23" cy="23" r="23" fill="var(--border)"/><text x="23" y="28" text-anchor="middle" font-size="20" fill="var(--grey)">?</text></svg>
-    {line}
+        sn     = t.get("screen_name", "")
+        reason = t.get("reason", "unavailable")
+        label  = f"This Tweet was from @{sn} was {reason}." if sn else (t.get("text") or f"This Tweet was {reason}.")
+        link   = _tweet_permalink(sn, t.get("id"))
+        inner  = f'<a href="{link}" style="color:inherit;text-decoration:none;">{label}</a>' if link else label
+        line = "<div class='left-col' style='height:14px;margin-top:4px;'><div class=\"thread-line\"></div></div>" if is_parent else ""
+        return f"""<div class="tweet-row" style="flex-direction:column;">
+  <div class="quote-block" style="display:flex;align-items:center;justify-content:center;padding:16px 14px;margin:0;">
+    <span style="color:#7b93a8;font-size:15px;line-height:1.4;text-align:center;">{inner}</span>
   </div>
-  <div class="right-col" style="display:flex;align-items:center;padding-bottom:12px;">
-    <span style="color:var(--grey);font-size:14px;">{label}</span>
-  </div>
+  {line}
 </div>"""
     u      = t["user"]
     vicon  = verified_svg(u.get("verified_type"), u.get("is_blue_verified", False))
@@ -2007,6 +2071,9 @@ def tweet_row_html(t, is_parent=False, no_source=False, is_reply=False):
     is_focal    = not is_parent and not is_reply
     rel_str     = rel_time(t["created_at"])
     row_class   = "tweet-row" + (" top-reply" if is_reply else ("" if is_parent else " focal"))
+    time_link   = _tweet_permalink(u.get("screen_name"), t.get("id"))
+    rel_str_linked = (f'<a href="{time_link}" style="color:inherit;text-decoration:none;">{rel_str}</a>'
+                       if time_link else rel_str)
 
     if _BIRD_ICON:
         bird_color   = "#1DA1F2" if is_focal else "var(--grey)"
@@ -2014,9 +2081,9 @@ def tweet_row_html(t, is_parent=False, no_source=False, is_reply=False):
                          f'display:inline-flex;align-items:center;">{bird_svg(15, bird_color)}</span>')
         inline_time  = "" if is_focal else (
             f'<span class="tweet-time-inline" style="color:var(--grey);font-size:14px;">'
-            f'&nbsp;\u00b7&nbsp;{rel_str}</span>')
+            f'&nbsp;\u00b7&nbsp;{rel_str_linked}</span>')
     else:
-        corner_html  = f'<span class="tweet-time">{rel_str}</span>'
+        corner_html  = f'<span class="tweet-time">{rel_str_linked}</span>'
         inline_time  = ""
 
     rt_by = t.get("rt_by_user")
@@ -2116,7 +2183,7 @@ def tweet_row_html(t, is_parent=False, no_source=False, is_reply=False):
     {qt_html}
     {bw_html}
     {broadcast_html}
-    <div class="tweet-date">{abs_time(t["created_at"])}</div>
+    <div class="tweet-date">{_linked_abs_time(t)}</div>
     {stats}
   </div>
 </div>"""
@@ -2483,6 +2550,12 @@ async def _main():
     else:
         tweets = parse_tweet_result_single(data)
 
+    if not tweets:
+        # Shouldn't happen any more (parsers now return a tombstone placeholder
+        # instead of an empty list), but keep this as a last-resort guard.
+        tweets = [{"__tombstone": True, "id": fid, "text": "This Tweet could not be found.",
+                   "screen_name": "", "reason": "unavailable"}]
+
     if args.no_context:
         tweets = [tweets[-1]]
 
@@ -2516,7 +2589,7 @@ async def _main():
                 print("Note: found a 'quote of a quote' but couldn't fetch it (no auth/network); showing a link instead.",
                       file=sys.stderr)
 
-    tweet_id = tweets[-1]["id"]
+    tweet_id = tweets[-1].get("id") or "unknown"
     focal = tweets[-1]
 
     if args.with_note or args.with_notes:
@@ -2592,8 +2665,9 @@ async def _main():
         print(format_tweet_line(focal))
         return
 
-    user_name = focal["user"]["screen_name"]
-    if not args.output and (focal.get("rt_by_user") or focal.get("is_rt")):
+    user_name = focal.get("screen_name") if focal.get("__tombstone") else focal["user"]["screen_name"]
+    user_name = user_name or "unknown"
+    if not focal.get("__tombstone") and not args.output and (focal.get("rt_by_user") or focal.get("is_rt")):
         if focal.get("rt_by_user"):
             rt_by = focal["rt_by_user"]["screen_name"]
             orig  = focal["user"]["screen_name"]
