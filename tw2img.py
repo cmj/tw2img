@@ -97,7 +97,17 @@ GUEST_TOKEN_URL                = "https://api.twitter.com/1.1/guest/activate.jso
 # Override via config: nitter_url = https://nitter.example.com
 # Set to empty string to disable hyperlinking of mentions/hashtags entirely.
 # This is ONLY FOR HTML rendered output.
-_TWEET_BASE_URL = "https://x.com"
+_TWEET_BASE_URL = "https://nitter.net"
+
+def _nitter_link(url):
+    """Rewrite a twitter.com/x.com tweet permalink to use the configured
+    nitter_url base (see _TWEET_BASE_URL / tw2img.conf), preserving the
+    rest of the URL (path, query string, etc). Falls back to the original
+    URL if it doesn't look like a twitter.com/x.com link, or if nitter_url
+    has been explicitly disabled (set to an empty string in the config)."""
+    if not url or not _TWEET_BASE_URL:
+        return url
+    return re.sub(r"^https?://(?:www\.)?(?:twitter|x)\.com", _TWEET_BASE_URL, url)
 
 # rankingMode: Likes, Recency, Relevance
 TWEET_DETAIL_VARS   = lambda id: {"focalTweetId": id, "with_rux_injections": True,
@@ -1692,7 +1702,7 @@ def quote_block_html(qt, depth=0):
     if not qt: return ""
     if qt.get("__tombstone"):
         sn = qt.get("screen_name", "")
-        link = qt.get("permalink", "")
+        link = _nitter_link(qt.get("permalink", ""))
         reason = qt.get("reason", "unavailable")
         label = f"This tweet from @{sn} is {reason}." if sn else qt.get("text", "This tweet is unavailable.")
         inner = f'<a href="{link}" style="color:inherit;text-decoration:none;">{label}</a>' if link else label
@@ -1705,7 +1715,7 @@ def quote_block_html(qt, depth=0):
         # weren't able to (or didn't try to) fetch it separately -- show a
         # plain link instead of silently dropping the context.
         sn   = qt.get("screen_name", "")
-        link = qt.get("permalink", "")
+        link = _nitter_link(qt.get("permalink", ""))
         label = f"Quoted @{sn}'s post" if sn else "Quoted another post"
         open_tag  = f'<a class="quote-stub-link" href="{link}">' if link else '<span class="quote-stub-link">'
         close_tag = "</a>" if link else "</span>"
@@ -2288,10 +2298,14 @@ async def _main():
     conf = load_config(extra_path=_pre_args.config)
 
     # Allow the nitter_url config key to redirect @mention / #hashtag / tweet
-    # hyperlinks to a self-hosted Nitter instance. Defaults to x.com.
-    # Set nitter_url = (empty) to disable mention/hashtag hyperlinking.
+    # hyperlinks -- including the "this tweet is unavailable/blocked" and
+    # "quote of a quote" stub links -- to a self-hosted/public Nitter instance.
+    # Defaults to https://nitter.net. Set nitter_url = x.com (or your own
+    # instance) to override, or nitter_url = (empty) to disable mention/hashtag
+    # hyperlinking (unavailable/stub links still point at x.com/twitter.com
+    # in that case, since there's nowhere else to send them).
     global _TWEET_BASE_URL
-    _TWEET_BASE_URL = conf.get("nitter_url", "https://x.com").rstrip("/")
+    _TWEET_BASE_URL = conf.get("nitter_url", "https://nitter.net").rstrip("/")
 
     def _b(key):
         """Return bool default from conf, defaulting to False."""
