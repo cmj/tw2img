@@ -709,23 +709,22 @@ def _parse_tweet_result(result, user_parser):
         else:
             quoted = _parse_tweet_result(qt_res, user_parser)
             if quoted and quoted.get("user", {}).get("screen_name") == "unknown":
-                # The tweet itself hydrated, but the author's user data didn't
-                # (e.g. the quoted author has blocked the quoting account) --
-                # X still gives us the tweet id/permalink but no user_results,
-                # so _parse_user's empty-result fallback kicked in. Fall back
-                # to a "blocked" link instead of showing "Unknown".
+                # The tweet itself hydrated, but the author's user data didn't.
+                # X gives us the tweet id/permalink but no user_results, and
+                # doesn't tell us why (blocked, protected, suspended, etc all
+                # look the same here) -- so _parse_user's empty-result
+                # fallback kicked in. Show a plain unavailable link instead
+                # of guessing at a reason, or showing "Unknown".
                 sn, expanded = _permalink_screen_name(leg)
-                quoted = {"__tombstone": True, "screen_name": sn, "text": "This tweet is blocked.",
-                          "permalink": expanded, "reason": "blocked"}
+                quoted = {"__tombstone": True, "screen_name": sn, "text": "This tweet is unavailable.",
+                          "permalink": expanded, "reason": "unavailable"}
     elif leg.get("quoted_status_id_str") and result.get("quoted_status_result") == {}:
-        # Empty result object with no error info -- in practice this is what
-        # X returns when the quoted author has blocked the quoting account
-        # (it can also mean the tweet was deleted, but we have no way to
-        # distinguish the two from this shape alone, and blocked is by far
-        # the common case in the wild).
+        # Empty result object with no error info at all -- could be blocked,
+        # deleted, suspended, or protected; X gives us nothing to tell them
+        # apart, so we don't guess.
         sn, expanded = _permalink_screen_name(leg)
-        quoted = {"__tombstone": True, "screen_name": sn, "text": "This tweet is blocked.", "permalink": expanded,
-                  "reason": "blocked"}
+        quoted = {"__tombstone": True, "screen_name": sn, "text": "This tweet is unavailable.", "permalink": expanded,
+                  "reason": "unavailable"}
     elif leg.get("quoted_status_id_str"):
         # A "quote of a quote": X's API only hydrates one level of
         # quoted_status_result, so a tweet that quotes an already-quoting
@@ -1767,9 +1766,8 @@ def quote_block_html(qt, depth=0):
         reason = qt.get("reason", "unavailable")
         label = f"This tweet from @{sn} is {reason}." if sn else qt.get("text", "This tweet is unavailable.")
         inner = f'<a href="{link}" style="color:inherit;text-decoration:none;">{label}</a>' if link else label
-        text_color = "#7b93a8" if reason == "blocked" else "var(--grey)"
         return f'''<div class="quote-block" style="display:flex;align-items:center;justify-content:center;padding:16px 14px;">
-  <span style="color:{text_color};font-size:15px;line-height:1.4;text-align:center;">{inner}</span>
+  <span style="color:#7b93a8;font-size:15px;line-height:1.4;text-align:center;">{inner}</span>
 </div>'''
     if qt.get("__stub"):
         # Nested quote X never hydrated for us (a "quote of a quote") and we
@@ -1974,7 +1972,7 @@ def grok_card_html(question, answer):
 def card_html(card):
     if not card: return ""
 
-    # unified_card image_website / video_website — full-width media + title bar
+    # unified_card image_website / video_website - full-width media + title bar
     if card.get("uc_type") in ("image_website", "video_website"):
         uc_media = card.get("uc_media", {})
         oi = uc_media.get("original_info", {})
@@ -1982,7 +1980,7 @@ def card_html(card):
         ar = (w / h) if w and h else 1.0
         # Portrait images: center with side bars; landscape: full width
         if ar < 0.9:
-            # portrait — cap render width so it doesn't stretch full card width
+            # portrait - cap render width so it doesn't stretch full card width
             max_w = round(ar * 400)  # at 400px tall
             media_style = f'display:flex;justify-content:center;align-items:stretch;background:#000;'
             inner_style = f'width:{max_w}px;flex-shrink:0;'
@@ -2333,7 +2331,7 @@ def embed_exif_url(output_path, url):
             with open(output_path, "wb") as f:
                 f.write(b"".join(out))
     except Exception:
-        pass  # Never fatal — EXIF is best-effort
+        pass  # Never fatal - EXIF is best-effort
 
 async def render_png(html, output_path, width=598, retina=True):
     try:
@@ -2417,7 +2415,7 @@ async def _main():
     p.add_argument("--with-replies", action=argparse.BooleanOptionalAction,
                    default=_b("with_replies"),
                    help="Include the user's own replies when fetching @user timeline "
-                        "(default: on; requires auth — silently ignored in guest mode)")
+                        "(default: on; requires auth - silently ignored in guest mode)")
     p.add_argument("--width",      type=int, default=int(conf.get("width", 598)))
     p.add_argument("--css",        default=conf.get("css") or None, help="File to override the theme (ex: nitter/public/css/themes/pleroma.css)")
     p.add_argument("--nitter",     action="store_true", default=_b("nitter"), help="Use Nitter default theme")
