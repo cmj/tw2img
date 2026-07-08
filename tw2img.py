@@ -1610,6 +1610,7 @@ _LANG_NAMES = {
     "el": "Greek", "gu": "Gujarati", "ht": "Haitian Creole", "ha": "Hausa",
     "haw": "Hawaiian", "he": "Hebrew", "iw": "Hebrew", "hi": "Hindi", "hmn": "Hmong",
     "hu": "Hungarian", "is": "Icelandic", "ig": "Igbo", "id": "Indonesian",
+    "in": "Indonesian",  # deprecated lang code fix
     "ga": "Irish", "it": "Italian", "ja": "Japanese", "jv": "Javanese",
     "kn": "Kannada", "kk": "Kazakh", "km": "Khmer", "rw": "Kinyarwanda",
     "ko": "Korean", "ku": "Kurdish", "ky": "Kyrgyz", "lo": "Lao",
@@ -1644,11 +1645,12 @@ def _lang_display_name(code):
 # only accepts "en") and a handful of codes don't match ISO 639-1/BCP-47 at
 # all: bare "zh" is rejected (only the region-qualified "zh-CN"/"zh-TW"
 # work), and Hebrew/Javanese still use old codes ("iw"/"jw") rather than the
-# modern ones ("he"/"jv") that X's API and most of the world use.
+# modern ones ("he"/"jv") that X's API and most of the world use. X also still
+# reports Indonesian as the deprecated "in".
 _GTRANS_LANG_FIXUPS = {
     "zh": "zh-CN", "zh-cn": "zh-CN", "zh-hans": "zh-CN", "zh-sg": "zh-CN",
     "zh-tw": "zh-TW", "zh-hant": "zh-TW", "zh-hk": "zh-TW", "zh-mo": "zh-TW",
-    "he": "iw", "jv": "jw",
+    "he": "iw", "jv": "jw", "in": "id",
 }
 
 def _gtrans_lang(code):
