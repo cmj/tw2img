@@ -667,8 +667,8 @@ def _permalink_screen_name(leg):
 
 def _classify_unavailable(res):
     """Given a TweetTombstone or TweetUnavailable result object, return
-    (reason, text). reason is a short lowercase word ("suspended",
-    "deleted", "removed", "unavailable") suitable for use in
+    (reason, text). reason is a short lowercase word/token ("suspended",
+    "deleted", "removed", "no_account", "unavailable") suitable for use in
     "This Tweet was ... {reason}.", text is a fallback human-readable
     message for when we don't have a screen_name to build that sentence."""
     typename = res.get("__typename")
@@ -680,6 +680,8 @@ def _classify_unavailable(res):
         low = text.lower()
         if "suspend" in low:
             reason = "suspended"
+        elif "account" in low and "no longer exist" in low:
+            reason = "no_account"
         elif "no longer exist" in low or "delet" in low:
             reason = "deleted"
         elif "violat" in low:
@@ -688,6 +690,28 @@ def _classify_unavailable(res):
             reason = "unavailable"
         return reason, text
     return "unavailable", "This tweet is unavailable."
+
+def _tombstone_label_html(sn, reason, text, tid=None, permalink=""):
+    """Build the inner HTML label for a tombstone card. Handles the
+    "no_account" reason specially: X renders that as "This account
+    @handle no longer exists." with the "This account ... no longer
+    exists." wrapper linking to the generic /i/status/ permalink and the
+    @handle linking to the (now-gone) user separately."""
+    if not tid:
+        m = re.search(r"/status/(\d+)", permalink or "")
+        tid = m.group(1) if m else None
+    generic_link = _tweet_permalink("i", tid) if tid else _nitter_link(permalink)
+    user_link    = _tweet_permalink(sn, tid) if (sn and tid) else _nitter_link(permalink)
+    if reason == "no_account" and sn:
+        pre  = (f'<a href="{generic_link}" style="color:inherit;text-decoration:none;">This account </a>'
+                if generic_link else "This account ")
+        mid  = (f'@<a href="{user_link}" style="color:inherit;text-decoration:none;">{sn}</a>'
+                if user_link else f"@{sn}")
+        post = (f'<a href="{generic_link}" style="color:inherit;text-decoration:none;"> no longer exists.</a>'
+                if generic_link else " no longer exists.")
+        return pre + mid + post
+    label = f"This Tweet from @{sn} was {reason}." if sn else (text or f"This Tweet was {reason}.")
+    return f'<a href="{generic_link}" style="color:inherit;text-decoration:none;">{label}</a>' if generic_link else label
 
 def _parse_tweet_result(result, user_parser):
     if not result or result.get("__typename") in ("TweetTombstone", "TweetUnavailable"):
@@ -1088,7 +1112,12 @@ def format_tweet_line(tweet, nsfw=False, birdwatch=False):
     if tweet.get("__tombstone"):
         sn = tweet.get("screen_name", "")
         reason = tweet.get("reason", "unavailable")
-        label = f"This Tweet was from @{sn} was {reason}." if sn else (tweet.get("text") or f"This Tweet was {reason}.")
+        if reason == "no_account" and sn:
+            label = f"This account @{sn} no longer exists."
+        elif sn:
+            label = f"This Tweet from @{sn} was {reason}."
+        else:
+            label = tweet.get("text") or f"This Tweet was {reason}."
         return label
 
     user = tweet["user"]
@@ -1260,7 +1289,7 @@ def _attribution_html(attr):
     vicon = verified_svg(attr.get("verified_type"), attr.get("is_blue_verified", False))
     avatar = attr["avatar_url"]
     return (
-        f'<div class="media-attribution" style="display: flex; align-items: center; margin-top: 2px; margin-bottom: 8px; font-size: 13px; color: var(--grey); gap: 4px; font-family: -apple-system, BlinkMacSystemFont, sans-serif;">'
+        f'<div class="media-attribution" style="display: flex; align-items: center; margin-top: 2px; margin-bottom: 8px; font-size:calc(13px * var(--fs)); color: var(--grey); gap: 4px; font-family: -apple-system, BlinkMacSystemFont, sans-serif;">'
         f'<span>From </span>'
         f'<img class="attr-avatar" src="{avatar}" style="width: 16px; height: 16px; border-radius: 50%; object-fit: cover; display: inline-block; vertical-align: middle;">'
         f'<span style="display:inline-flex;align-items:center;margin-top:2px;">'
@@ -1312,7 +1341,7 @@ def media_html(ext_entities, is_ai=False):
             )
 
     ai_label = (
-        '<div class="ai-label" style="font-size:12px;color:var(--grey);margin-top:3px;display:flex;align-items:center;gap:0;">'
+        '<div class="ai-label" style="font-size:calc(12px * var(--fs));color:var(--grey);margin-top:3px;display:flex;align-items:center;gap:0;">'
         + icon_svg("robot", 18, "var(--grey)")
         + 'Made with AI'
         '</div>'
@@ -1426,7 +1455,7 @@ def parody_label_html(label):
         return ""
     return (
         f'<div class="parody-label" style="display:inline-flex;align-items:center;gap:3px;'
-        f'color:var(--grey);font-size:12px;line-height:1;margin-top:1px;">'
+        f'color:var(--grey);font-size:calc(12px * var(--fs));line-height:1;margin-top:1px;">'
         f'{icon_svg("mask", 12, "var(--grey)")}'
         f'<span>{label} account</span>'
         f'</div>'
@@ -1464,10 +1493,11 @@ body {
     --bw-fg:   #5a6472;
     --bg-hover: #22262b;
     --accent:  #8899A6;
+    --fs:      1;
     background: var(--bg);
     color: var(--fg);
     font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
-    font-size: 15px;
+    font-size:calc(15px * var(--fs));
 }
 a { color: var(--link); text-decoration: none; }
 """
@@ -1487,10 +1517,11 @@ body {
     --bw-fg:   #536471;
     --bg-hover: #e7eaed;
     --accent:  #1d9bf0;
+    --fs:      1;
     background: var(--bg);
     color: var(--fg);
     font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
-    font-size: 15px;
+    font-size:calc(15px * var(--fs));
 }
 a { color: var(--link); text-decoration: none; }
 """
@@ -1507,17 +1538,17 @@ SHARED_CSS = """
 .tweet-header { display: flex; align-items: flex-start; justify-content: space-between; margin-bottom: 1px; }
 .tweet-header-left { display: flex; flex-direction: column; align-items: flex-start; flex: 1; overflow: hidden; }
 .tweet-header-left > * { margin-right: 0; }
-.fullname { font-weight: 700; font-size: 15px; white-space: nowrap; }
-.username { color: var(--accent); font-size: 14px; white-space: nowrap; padding-left: 4px; }
-.tweet-time { color: var(--accent); font-size: 14px; white-space: nowrap; flex-shrink: 0; margin-left: 8px; }
-.replying-to { color: var(--grey); font-size: 13px; margin-bottom: 3px; line-height: 1.4; }
-.tweet-content { font-size: 15px; margin: 4px 0 0; line-height: 1.3em; white-space: pre-wrap; word-wrap: break-word; }
-.focal .tweet-content { font-size: 17px; }
-.focal .tweet-date { color: var(--grey); font-size: 13px; margin-bottom: 0; padding-top: 6px; }
-.stats { display: flex; align-items: center; color: var(--grey); font-size: 13px; padding-top: 8px; }
+.fullname { font-weight: 700; font-size:calc(15px * var(--fs)); white-space: nowrap; }
+.username { color: var(--accent); font-size:calc(14px * var(--fs)); white-space: nowrap; padding-left: 4px; }
+.tweet-time { color: var(--accent); font-size:calc(14px * var(--fs)); white-space: nowrap; flex-shrink: 0; margin-left: 8px; }
+.replying-to { color: var(--grey); font-size:calc(13px * var(--fs)); margin-bottom: 3px; line-height: 1.4; }
+.tweet-content { font-size:calc(15px * var(--fs)); margin: 4px 0 0; line-height: 1.3em; white-space: pre-wrap; word-wrap: break-word; }
+.focal .tweet-content { font-size:calc(17px * var(--fs)); }
+.focal .tweet-date { color: var(--grey); font-size:calc(13px * var(--fs)); margin-bottom: 0; padding-top: 6px; }
+.stats { display: flex; align-items: center; color: var(--grey); font-size:calc(13px * var(--fs)); padding-top: 8px; }
 .stat { white-space: nowrap; margin-right: 10px; }
 .stat svg { margin: 0 1px 0 0; }
-.source { margin-left: auto; font-size: 12px; }
+.source { margin-left: auto; font-size:calc(12px * var(--fs)); }
 .media-row { display: grid; margin: 6px 0; border-radius: 10px; overflow: hidden; gap: 3px; }
 .media-row .attachment { min-height: 0; overflow: hidden; }
 .media-row .attachment img { width: 100%; height: 100%; object-fit: cover; display: block; }
@@ -1538,19 +1569,19 @@ SHARED_CSS = """
 .video-wrap { position: relative; max-height: 510px; overflow: hidden; display: flex; justify-content: center; background: #000; }
 .video-wrap img { width: auto; height: auto; max-width: 100%; max-height: 510px; object-fit: contain; display: block; }
 .play-overlay { position: absolute; top: 0; left: 0; right: 0; bottom: 0; display: flex; align-items: center; justify-content: center; pointer-events: none; }
-.vid-duration { position: absolute; bottom: 6px; left: 8px; background: rgba(0,0,0,0.6); color: #fff; font-size: 12px; font-weight: 600; line-height: 1; padding: 3px 5px; border-radius: 4px; pointer-events: none; }
+.vid-duration { position: absolute; bottom: 6px; left: 8px; background: rgba(0,0,0,0.6); color: #fff; font-size:calc(12px * var(--fs)); font-weight: 600; line-height: 1; padding: 3px 5px; border-radius: 4px; pointer-events: none; }
 .media-attribution { display: flex; align-items: center; gap: 6px; margin: 6px 0 4px; }
 .attr-avatar { width: 24px; height: 24px; border-radius: 50%; display: block; flex-shrink: 0; }
-.attr-name { font-size: 14px; font-weight: 700; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.attr-name { font-size:calc(14px * var(--fs)); font-weight: 700; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .quote-block { border: 1px solid var(--border); border-radius: 10px; padding: 10px 12px 10px; margin: 6px 0; background: var(--qt-bg); overflow: hidden; }
 .quote-block.has-media { padding-bottom: 0; }
 .quote-header { display: flex; align-items: center; flex-wrap: wrap; margin-bottom: 4px; line-height: 1; }
 .quote-header > * { margin-right: 4px; }
 .quote-avatar { width: 20px; height: 20px; border-radius: 10px; display: inline-block; }
-.quote-name { font-weight: 700; font-size: 14px; margin-right: 0; }
-.quote-sn { color: var(--accent); font-size: 13px; padding-left: 4px; }
-.quote-time { color: var(--grey); font-size: 13px; margin-left: auto; }
-.quote-text { font-size: 14px; line-height: 1.3em; white-space: pre-wrap; word-wrap: break-word; }
+.quote-name { font-weight: 700; font-size:calc(14px * var(--fs)); margin-right: 0; }
+.quote-sn { color: var(--accent); font-size:calc(13px * var(--fs)); padding-left: 4px; }
+.quote-time { color: var(--grey); font-size:calc(13px * var(--fs)); margin-left: auto; }
+.quote-text { font-size:calc(14px * var(--fs)); line-height: 1.3em; white-space: pre-wrap; word-wrap: break-word; }
 .quote-media { margin: 6px -12px 0; overflow: hidden; border-radius: 0 0 10px 10px; }
 .quote-media > img { width: 100%; display: block; }
 .quote-media .video-wrap { max-height: 400px; background: #000; }
@@ -1563,36 +1594,36 @@ SHARED_CSS = """
 /* "Quote of a quote": a smaller quote-block nested inside another one */
 .quote-block .quote-block { margin: 8px 0 0; border-radius: 8px; }
 .quote-block .quote-block .quote-avatar { width: 16px; height: 16px; border-radius: 8px; }
-.quote-block .quote-block .quote-name { font-size: 13px; }
-.quote-block .quote-block .quote-sn { font-size: 12px; }
-.quote-block .quote-block .quote-time { font-size: 12px; }
-.quote-block .quote-block .quote-text { font-size: 13px; }
+.quote-block .quote-block .quote-name { font-size:calc(13px * var(--fs)); }
+.quote-block .quote-block .quote-sn { font-size:calc(12px * var(--fs)); }
+.quote-block .quote-block .quote-time { font-size:calc(12px * var(--fs)); }
+.quote-block .quote-block .quote-text { font-size:calc(13px * var(--fs)); }
 .quote-block .quote-block .quote-media { margin: 6px -10px 0; }
 .quote-block .quote-block .quote-card { margin: 6px -10px 0; }
 .quote-stub { padding: 9px 12px; }
-.quote-stub-link { display: flex; align-items: center; gap: 5px; font-size: 13px; color: var(--accent); text-decoration: none; }
+.quote-stub-link { display: flex; align-items: center; gap: 5px; font-size:calc(13px * var(--fs)); color: var(--accent); text-decoration: none; }
 .quote-stub-link:hover { text-decoration: underline; }
 .birdwatch { border: 1px solid var(--border); border-radius: 10px; margin: 6px 0; background: var(--bw-bg); overflow: hidden; }
 .birdwatch.proposed { border-style: dashed; opacity: 0.92; }
-.community-note-header { background-color: var(--bg-hover); font-weight: 700; font-size: 13px; padding: 6px 10px 8px; display: flex; align-items: center; gap: 12px; color: var(--fg); }
+.community-note-header { background-color: var(--bg-hover); font-weight: 700; font-size:calc(13px * var(--fs)); padding: 6px 10px 8px; display: flex; align-items: center; gap: 12px; color: var(--fg); }
 .community-note-header .icon-container { flex-shrink: 0; color: var(--accent); }
-.community-note-text { font-size: 13px; color: var(--fg); white-space: pre-line; padding: 6px 10px 10px; }
+.community-note-text { font-size:calc(13px * var(--fs)); color: var(--fg); white-space: pre-line; padding: 6px 10px 10px; }
 .card { border: 1px solid var(--border); border-radius: 10px; margin: 6px 0; overflow: hidden; display: flex; flex-direction: column; }
 .card-img { width: 100%; display: block; max-height: 220px; object-fit: cover; }
 .card-body { padding: 8px 12px 10px; }
-.card-domain { font-size: 12px; color: var(--grey); text-transform: uppercase; margin-bottom: 2px; }
-.card-title { font-size: 14px; font-weight: 700; line-height: 1.3; margin-bottom: 2px; }
-.card-desc { font-size: 13px; color: var(--grey); line-height: 1.4; }
+.card-domain { font-size:calc(12px * var(--fs)); color: var(--grey); text-transform: uppercase; margin-bottom: 2px; }
+.card-title { font-size:calc(14px * var(--fs)); font-weight: 700; line-height: 1.3; margin-bottom: 2px; }
+.card-desc { font-size:calc(13px * var(--fs)); color: var(--grey); line-height: 1.4; }
 .tweet-row.focal { flex-direction: column; padding: 0; }
 .focal-header { display: flex; align-items: center; padding: 14px 14px 8px; gap: 12px; }
 .focal-header .avatar { width: 46px; height: 46px; border-radius: 23px; flex-shrink: 0; }
 .focal-header-names { display: flex; flex-direction: column; justify-content: center; line-height: 1.25; }
 .focal-header-top { display: flex; align-items: center; gap: 0; }
-.focal-header-top .fullname { font-size: 15px; font-weight: 700; }
+.focal-header-top .fullname { font-size:calc(15px * var(--fs)); font-weight: 700; }
 .focal-header-bottom { display: flex; flex-direction: column; align-items: flex-start; }
-.focal-header-bottom .username { color: var(--accent); font-size: 14px; padding-left: 0; }
+.focal-header-bottom .username { color: var(--accent); font-size:calc(14px * var(--fs)); padding-left: 0; }
 .focal-body { padding: 0 14px 14px; }
-.rt-header { display: flex; align-items: center; color: var(--grey); font-size: 13px; font-weight: 700; padding: 14px 14px 0 53px; gap: 5px; }
+.rt-header { display: flex; align-items: center; color: var(--grey); font-size:calc(13px * var(--fs)); font-weight: 700; padding: 14px 14px 0 53px; gap: 5px; }
 .rt-header svg { flex-shrink: 0; }
 .focal-header.has-rt { padding-top: 0; }
 .top-reply-divider { height: 1px; background: var(--border); margin: 0 14px; }
@@ -1694,7 +1725,7 @@ def _trans_label_html(lang_name):
     if not lang_name:
         return ""
     return (
-        f'<div class="translated-from" style="font-size:10px;color:var(--accent);'
+        f'<div class="translated-from" style="font-size:calc(10px * var(--fs));color:var(--accent);'
         f'margin-bottom:3px;line-height:1.3;opacity:0.75;">'
         f'Translated from {lang_name}</div>'
     )
@@ -1764,12 +1795,11 @@ def quote_block_html(qt, depth=0):
     if not qt: return ""
     if qt.get("__tombstone"):
         sn = qt.get("screen_name", "")
-        link = _nitter_link(qt.get("permalink", ""))
         reason = qt.get("reason", "unavailable")
-        label = f"This tweet from @{sn} is {reason}." if sn else qt.get("text", "This tweet is unavailable.")
-        inner = f'<a href="{link}" style="color:inherit;text-decoration:none;">{label}</a>' if link else label
+        inner = _tombstone_label_html(sn, reason, qt.get("text", "This tweet is unavailable."),
+                                       tid=qt.get("id"), permalink=qt.get("permalink", ""))
         return f'''<div class="quote-block" style="display:flex;align-items:center;justify-content:center;padding:16px 14px;">
-  <span style="color:#7b93a8;font-size:15px;line-height:1.4;text-align:center;">{inner}</span>
+  <span style="color:#7b93a8;font-size:calc(15px * var(--fs));line-height:1.4;text-align:center;">{inner}</span>
 </div>'''
     if qt.get("__stub"):
         # Nested quote X never hydrated for us (a "quote of a quote") and we
@@ -1948,7 +1978,7 @@ def _md_to_html(text):
         for raw_link, url in sources:
             m = re.fullmatch(r'\[([^\]]*)\]\(([^)]+)\)', raw_link.strip())
             label = m.group(1).strip() if m and m.group(1).strip() else url
-            out.append(f'<a href="{_html.escape(url)}" style="display:block;margin-top:4px;font-size:12px;color:var(--link);word-break:break-all;text-decoration:none;">{_html.escape(label)}</a>')
+            out.append(f'<a href="{_html.escape(url)}" style="display:block;margin-top:4px;font-size:calc(12px * var(--fs));color:var(--link);word-break:break-all;text-decoration:none;">{_html.escape(label)}</a>')
         out.append("</div>")
 
     return "\n".join(out)
@@ -1957,15 +1987,15 @@ def grok_card_html(question, answer):
     """Render a Grok share attachment card styled like X's native Grok response card."""
     if not answer:
         return ""
-    q_html = f'<div style="font-weight:700;font-size:14px;margin-bottom:8px;">{question}</div>' if question else ""
+    q_html = f'<div style="font-weight:700;font-size:calc(14px * var(--fs));margin-bottom:8px;">{question}</div>' if question else ""
     a_html = _md_to_html(answer)
     return f'''<div class="grok-card" style="border:1px solid var(--border);border-radius:12px;margin:6px 0;overflow:hidden;">
   <div style="background:var(--qt-bg);padding:10px 12px 12px;">
-    <div style="display:flex;align-items:center;font-size:12px;color:var(--grey);margin-bottom:8px;">
+    <div style="display:flex;align-items:center;font-size:calc(12px * var(--fs));color:var(--grey);margin-bottom:8px;">
       {GROK_SVG}<span>Answer by Grok</span>
     </div>
     {q_html}
-    <div style="font-size:13px;line-height:1.5;color:var(--fg);">
+    <div style="font-size:calc(13px * var(--fs));line-height:1.5;color:var(--fg);">
       {a_html}
     </div>
   </div>
@@ -2044,13 +2074,11 @@ def tweet_row_html(t, is_parent=False, no_source=False, is_reply=False):
     if t.get("__tombstone"):
         sn     = t.get("screen_name", "")
         reason = t.get("reason", "unavailable")
-        label  = f"This Tweet was from @{sn} was {reason}." if sn else (t.get("text") or f"This Tweet was {reason}.")
-        link   = _tweet_permalink(sn, t.get("id"))
-        inner  = f'<a href="{link}" style="color:inherit;text-decoration:none;">{label}</a>' if link else label
+        inner  = _tombstone_label_html(sn, reason, t.get("text") or "", tid=t.get("id"))
         line = "<div class='left-col' style='height:14px;margin-top:4px;'><div class=\"thread-line\"></div></div>" if is_parent else ""
         return f"""<div class="tweet-row" style="flex-direction:column;">
   <div class="quote-block" style="display:flex;align-items:center;justify-content:center;padding:16px 14px;margin:0;">
-    <span style="color:#7b93a8;font-size:15px;line-height:1.4;text-align:center;">{inner}</span>
+    <span style="color:#7b93a8;font-size:calc(15px * var(--fs));line-height:1.4;text-align:center;">{inner}</span>
   </div>
   {line}
 </div>"""
@@ -2080,7 +2108,7 @@ def tweet_row_html(t, is_parent=False, no_source=False, is_reply=False):
         corner_html  = (f'<span class="tweet-bird" style="margin-left:auto;flex-shrink:0;'
                          f'display:inline-flex;align-items:center;">{bird_svg(15, bird_color)}</span>')
         inline_time  = "" if is_focal else (
-            f'<span class="tweet-time-inline" style="color:var(--grey);font-size:14px;">'
+            f'<span class="tweet-time-inline" style="color:var(--grey);font-size:calc(14px * var(--fs));">'
             f'&nbsp;\u00b7&nbsp;{rel_str_linked}</span>')
     else:
         corner_html  = f'<span class="tweet-time">{rel_str_linked}</span>'
@@ -2121,8 +2149,8 @@ def tweet_row_html(t, is_parent=False, no_source=False, is_reply=False):
         ">
             {f'<img src="{bc_img}" style="width: 100%; display: block; aspect-ratio: 16/9; object-fit: cover;" />' if bc_img else ''}
             <div style="padding: 12px; border-top: 1px solid var(--border);">
-                <div style="font-weight: bold; font-size: 15px; color: var(--text); line-height: 1.4;">{bc_title}</div>
-                <div style="font-size: 13px; color: var(--dim); margin-top: 4px; text-transform: lowercase;">x.com/i/broadcasts</div>
+                <div style="font-weight: bold; font-size:calc(15px * var(--fs)); color: var(--text); line-height: 1.4;">{bc_title}</div>
+                <div style="font-size:calc(13px * var(--fs)); color: var(--dim); margin-top: 4px; text-transform: lowercase;">x.com/i/broadcasts</div>
             </div>
         </div>
         '''
@@ -2235,7 +2263,7 @@ def _apply_nitter_theme(css_text):
         return ""
     return "body {\n" + "\n".join(lines) + "\n    background: var(--bg);\n    color: var(--fg);\n}\na { color: var(--link); text-decoration: none; }\n"
 
-def build_html(tweets, light=False, no_source=False, css_path=None, width=598, nitter=False, for_browser=False, top_reply=None):  # top_reply: list
+def build_html(tweets, light=False, no_source=False, css_path=None, width=598, nitter=False, for_browser=False, top_reply=None, font_scale=1.0):  # top_reply: list
     theme_css = LIGHT_CSS if light else DARK_CSS
     if nitter and not css_path:
         override = _apply_nitter_theme(NITTER_CSS)
@@ -2282,6 +2310,7 @@ html, body {{
         extra_style = centering_css
     else:
         extra_style = f"body {{ width: {width}px; }}"
+    extra_style += f"\nbody {{ --fs: {font_scale}; }}"
     return f"""<!DOCTYPE html>
 <html><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
@@ -2419,6 +2448,8 @@ async def _main():
                    help="Include the user's own replies when fetching @user timeline "
                         "(default: on; requires auth - silently ignored in guest mode)")
     p.add_argument("--width",      type=int, default=int(conf.get("width", 598)))
+    p.add_argument("--font-scale", type=float, default=float(conf.get("font_scale", 1.0)), metavar="N",
+                   help="Scale all text size by this factor, e.g. 1.15 for 15%% bigger (default: 1.0)")
     p.add_argument("--css",        default=conf.get("css") or None, help="File to override the theme (ex: nitter/public/css/themes/pleroma.css)")
     p.add_argument("--nitter",     action="store_true", default=_b("nitter"), help="Use Nitter default theme")
     p.add_argument("--html-only",  action="store_true", default=_b("html_only"), help="Print HTML to stdout instead of rendering PNG")
@@ -2690,7 +2721,7 @@ async def _main():
 
     html = build_html(tweets, light=args.light, no_source=args.no_source, css_path=args.css, width=args.width, nitter=args.nitter,
                       for_browser=(args.save_html is not None or _view_html_requested),
-                      top_reply=top_reply_tweets)
+                      top_reply=top_reply_tweets, font_scale=args.font_scale)
 
     if args.save_html is not None:
         if args.save_html == "":
