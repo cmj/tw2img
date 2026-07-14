@@ -14,14 +14,14 @@ Notes:
     @username            implies --user; grabs the latest original tweet (skips RTs/replies)
     @username 3          grabs the 3rd most-recent tweet (skips RTs/replies)
     @username 3 out.png  same, saves to out.png
-    --with-replies       also include own replies in @user timeline (auth only, opt-in)
+    --with-replies       also include own replies in @user timeline (opt-in)
     --last-reply         for reply threads: show only immediate parent + focal tweet
     --top-reply           append the top reply (by likes) below the focal tweet
     --top-replies N       append top N replies (by likes) below focal tweet (1-20)
     --no-nested-quotes    don't fetch a quoted tweet's own quoted tweet (shown as a link instead)
     --with-note            add the top-voted proposed MISLEADING Community Note (labelled 'Proposed' if not yet shown on Twitter)
     --with-notes           add every proposed Community Note (misleading and not-misleading) for the tweet
-    --guest for no authentication, won't see conversation context
+    --guest for no authentication (no account needed); full conversation context and replies still included
     --user <screen_name> to fetch latest tweet from user
     export TWITTER_AUTH_TOKEN=<auth_token>
     export TWITTER_CSRF_TOKEN=<x_csrf_token>
@@ -81,8 +81,14 @@ def load_config(extra_path=None):
     cfg.read([str(s) for s in sources])
     return dict(cfg["tw2img"]) if "tw2img" in cfg else {}
 
-BEARER = "AAAAAAAAAAAAAAAAAAAAANRILgAAAAAAnNwIzUejRCOuH5E6I8xnZz4puTs%3D1Zv7ttfk8LF81IUq16cHjhLTvJu4FA33AGWWjCpTnA"
-BEARER2 = "AAAAAAAAAAAAAAAAAAAAACHguwAAAAAAaSlT0G31NDEyg%2BSnBN5JuyKjMCU%3Dlhg0gv0nE7KKyiJNEAojQbn8Y3wJm1xidDK7VnKGBP4ByJwHPb"
+BEARER = (
+    "AAAAAAAAAAAAAAAAAAAAA"
+    "GUqDgEAAAAAxxUxnzaWND"
+    "%2BqIZQZtUiIn0WBOqo"
+    "%3DwUQLAtFWub7fLUrVcS6VW"
+    "j6bGYIN54DofXGWKApKmKWQjldULK"
+)
+
 UA = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
 
 TWEET_DETAIL_URL               = "https://x.com/i/api/graphql/xIYgDwjboktoFeXe_fgacw/TweetDetail"
@@ -347,8 +353,8 @@ def guest_headers(guest_token):
     return {"Authorization": f"Bearer {BEARER}", "User-Agent": UA,
             "x-guest-token": guest_token}
 
-def fetch_tweet_detail(tweet_id, auth_token, csrf_token):
-    return _req(TWEET_DETAIL_URL, auth_headers(auth_token, csrf_token), {
+def fetch_tweet_detail(tweet_id, headers):
+    return _req(TWEET_DETAIL_URL, headers, {
         "variables": json.dumps(TWEET_DETAIL_VARS(tweet_id)),
         "features":  json.dumps(TWEET_DETAIL_FEAT),
         "fieldToggles": json.dumps(TWEET_DETAIL_FTOG),
@@ -479,20 +485,21 @@ def fetch_user_id(screen_name, headers):
 def fetch_nth_tweet_id(user_id, headers, n=1, with_replies=True):
     """Return the Nth tweet (1-based) from a user's timeline.
 
-    When with_replies=True (default, requires auth): uses UserTweetsAndReplies so
-    the user's own replies are included alongside original tweets and RTs.
+    When with_replies=True (default): uses UserTweetsAndReplies so the user's
+    own replies are included alongside original tweets and RTs.
     When with_replies=False: uses UserTweets and skips replies.
 
-    Both modes always skip RTs.  guest mode forces with_replies=False since
-    UserTweetsAndReplies requires authentication.
+    Both modes always skip RTs. Works the same in guest mode as authenticated
+    mode -- the unified bearer token covers UserTweetsAndReplies too.
     """
     if with_replies:
         url  = USER_TWEETS_AND_REPLIES_URL
         feat = USER_TWEETS_AND_REPLIES_FEAT
         variables = {"userId": user_id, "count": 20, "includePromotedContent": True,
                      "withCommunity": True, "withVoice": True}
-        # This endpoint requires its own bearer token
-        headers = dict(headers, Authorization=f"Bearer {BEARER2}")
+        # Previously required its own bearer token (BEARER2); the unified
+        # token now works for this endpoint too.
+        headers = dict(headers, Authorization=f"Bearer {BEARER}")
     else:
         url  = USER_TWEETS_URL
         feat = USER_TWEETS_FEAT
@@ -2446,7 +2453,7 @@ async def _main():
     p.add_argument("--with-replies", action=argparse.BooleanOptionalAction,
                    default=_b("with_replies"),
                    help="Include the user's own replies when fetching @user timeline "
-                        "(default: on; requires auth - silently ignored in guest mode)")
+                        "(default: on)")
     p.add_argument("--width",      type=int, default=int(conf.get("width", 598)))
     p.add_argument("--font-scale", type=float, default=float(conf.get("font_scale", 1.0)), metavar="N",
                    help="Scale all text size by this factor, e.g. 1.15 for 15%% bigger (default: 1.0)")
@@ -2530,15 +2537,10 @@ async def _main():
                 sys.exit("Error: --auth-token/--csrf-token required (or use --guest)")
             headers = auth_headers(args.auth_token, args.csrf_token)
         user_id = fetch_user_id(args.user, headers)
-        # UserTweetsAndReplies requires auth; fall back to UserTweets in guest mode
-        use_with_replies = args.with_replies and not args.guest
-        tweet_id = fetch_nth_tweet_id(user_id, headers, n=tweet_index, with_replies=use_with_replies)
+        tweet_id = fetch_nth_tweet_id(user_id, headers, n=tweet_index, with_replies=args.with_replies)
         if not tweet_id:
             sys.exit(f"Error: no suitable tweet found for @{args.user}")
-        if args.guest:
-            data = fetch_tweet_result(tweet_id, headers)
-        else:
-            data = fetch_tweet_detail(tweet_id, args.auth_token, args.csrf_token)
+        data = fetch_tweet_detail(tweet_id, headers)
         inp = tweet_id
     elif inp == "-":
         data = json.load(sys.stdin)
@@ -2557,11 +2559,12 @@ async def _main():
 
         if args.guest:
             gt = get_guest_token()
-            data = fetch_tweet_result(tweet_id, guest_headers(gt))
+            headers = guest_headers(gt)
         else:
             if not args.auth_token or not args.csrf_token:
                 sys.exit("Error: --auth-token/--csrf-token required (or use --guest)")
-            data = fetch_tweet_detail(tweet_id, args.auth_token, args.csrf_token)
+            headers = auth_headers(args.auth_token, args.csrf_token)
+        data = fetch_tweet_detail(tweet_id, headers)
 
     if args.dump_json:
         print(json.dumps(data, indent=2))
@@ -2626,9 +2629,6 @@ async def _main():
     if args.with_note or args.with_notes:
         if not focal.get("has_birdwatch_notes"):
             pass  # tweet has no note activity; skip the extra request entirely
-        elif args.guest:
-            if not args.quiet:
-                print("Note: --with-note/--with-notes requires auth; skipping in --guest mode.", file=sys.stderr)
         else:
             _bw_headers = resolution_headers(args, headers)
             if _bw_headers:
