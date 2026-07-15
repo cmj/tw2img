@@ -676,12 +676,14 @@ def _classify_unavailable(res):
     """Given a TweetTombstone or TweetUnavailable result object, return
     (reason, text). reason is a short lowercase word/token ("suspended",
     "deleted", "removed", "no_account", "unavailable") suitable for use in
-    "This Tweet was ... {reason}.", text is a fallback human-readable
+    "This Tweet [is/was] ... {reason}.", text is a fallback human-readable
     message for when we don't have a screen_name to build that sentence."""
     typename = res.get("__typename")
     if typename == "TweetUnavailable":
         reason = (res.get("reason") or "unavailable").lower()
-        return reason, f"This Tweet is {reason}."
+        verb = "was" if reason in ("deleted", "removed") else "is"
+        return reason, f"This Tweet {verb} {reason}."
+    
     if typename == "TweetTombstone":
         text = res.get("tombstone", {}).get("text", {}).get("text", "") or "This tweet is unavailable."
         low = text.lower()
@@ -695,8 +697,14 @@ def _classify_unavailable(res):
             reason = "removed"
         else:
             reason = "unavailable"
+            
+        if reason != "no_account":
+            verb = "was" if reason in ("deleted", "removed") else "is"
+            text = f"This Tweet {verb} {reason}."
+            
         return reason, text
     return "unavailable", "This tweet is unavailable."
+
 
 def _tombstone_label_html(sn, reason, text, tid=None, permalink=""):
     """Build the inner HTML label for a tombstone card. Handles the
@@ -709,6 +717,7 @@ def _tombstone_label_html(sn, reason, text, tid=None, permalink=""):
         tid = m.group(1) if m else None
     generic_link = _tweet_permalink("i", tid) if tid else _nitter_link(permalink)
     user_link    = _tweet_permalink(sn, tid) if (sn and tid) else _nitter_link(permalink)
+    
     if reason == "no_account" and sn:
         pre  = (f'<a href="{generic_link}" style="color:inherit;text-decoration:none;">This account </a>'
                 if generic_link else "This account ")
@@ -717,7 +726,10 @@ def _tombstone_label_html(sn, reason, text, tid=None, permalink=""):
         post = (f'<a href="{generic_link}" style="color:inherit;text-decoration:none;"> no longer exists.</a>'
                 if generic_link else " no longer exists.")
         return pre + mid + post
-    label = f"This Tweet from @{sn} is {reason}." if sn else (text or f"This Tweet is {reason}.")
+    
+    verb = "was" if reason in ("deleted", "removed") else "is"
+    
+    label = f"This Tweet from @{sn} {verb} {reason}." if sn else (text or f"This Tweet {verb} {reason}.")
     return f'<a href="{generic_link}" style="color:inherit;text-decoration:none;">{label}</a>' if generic_link else label
 
 def _parse_tweet_result(result, user_parser):
