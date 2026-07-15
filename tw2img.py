@@ -837,6 +837,32 @@ def _parse_tweet_result(result, user_parser):
             card = {"title": title, "desc": desc, "domain": domain,
                     "url": url, "img_url": img_url, "is_player": False}
 
+    poll = None
+    if raw_card:
+        m_poll = re.match(r"poll(\d)choice", raw_card.get("name", ""))
+        if m_poll:
+            n_choices = int(m_poll.group(1))
+            choices = []
+            for i in range(1, n_choices + 1):
+                label = sv(f"choice{i}_label")
+                if not label:
+                    continue
+                try:
+                    count = int(sv(f"choice{i}_count") or 0)
+                except ValueError:
+                    count = 0
+                choices.append({"label": label, "count": count})
+            total_votes = sum(c["count"] for c in choices)
+            for c in choices:
+                c["pct"] = (c["count"] / total_votes * 100) if total_votes else 0
+            if choices:
+                poll = {
+                    "choices":          choices,
+                    "total_votes":      total_votes,
+                    "counts_are_final": sv("counts_are_final").lower() == "true",
+                    "end_datetime":     sv("end_datetime_utc"),
+                }
+
     nt = (result.get("note_tweet") or {}).get("note_tweet_results", {}).get("result", {})
     if nt.get("text"):
         full_text = nt["text"]
@@ -972,6 +998,7 @@ def _parse_tweet_result(result, user_parser):
         "rt_orig_sn":      rt_orig_sn,
         "quoted":          quoted,
         "card":            card,
+        "poll":            poll,
         "birdwatch":       bw_note,
         "birdwatch_ents":  bw_ents,
         "has_birdwatch_notes": has_birdwatch_notes,
@@ -1633,6 +1660,21 @@ SHARED_CSS = """
 .card-domain { font-size:calc(12px * var(--fs)); color: var(--grey); text-transform: uppercase; margin-bottom: 2px; }
 .card-title { font-size:calc(14px * var(--fs)); font-weight: 700; line-height: 1.3; margin-bottom: 2px; }
 .card-desc { font-size:calc(13px * var(--fs)); color: var(--grey); line-height: 1.4; }
+.poll { margin: 8px 0 2px; }
+.poll-option { position: relative; margin-bottom: 8px; padding: 10px 14px; border-radius: 8px; border: 1px solid var(--border); background: var(--bg); overflow: hidden; }
+.poll-option:last-of-type { margin-bottom: 0; }
+.poll-bar { position: absolute; top: 0; left: 0; bottom: 0; background: var(--bg-hover); border-radius: 8px 0 0 8px; }
+.poll-bar-winner { position: absolute; top: 0; left: 0; bottom: 0; background: var(--acc); border-radius: 8px 0 0 8px; }
+.poll-option-row { position: relative; z-index: 1; display: flex; justify-content: space-between; align-items: center; gap: 8px; }
+.poll-option-label { font-size:calc(15px * var(--fs)); color: var(--fg); font-weight: 400; }
+.poll-option-label-winner { color: #ffffff; font-weight: 700; }
+.poll-option-right { display: flex; align-items: baseline; gap: 8px; flex-shrink: 0; }
+.poll-option-votes { font-size:calc(13px * var(--fs)); color: var(--grey); font-weight: 400; white-space: nowrap; }
+.poll-option-votes-winner { color: rgba(255,255,255,0.85); }
+.poll-option-pct { position: relative; z-index: 1; font-size:calc(14px * var(--fs)); color: var(--grey); font-weight: 400; flex-shrink: 0; }
+.poll-option-pct-winner { color: #ffffff !important; font-weight: 700 !important; }
+.poll-badge { position: relative; z-index: 1; margin-top: 4px; font-size:calc(13px * var(--fs)); font-weight: 600; color: var(--grey); }
+.poll-footer { display: flex; justify-content: space-between; align-items: center; font-size:calc(13px * var(--fs)); color: var(--grey); padding: 2px 2px 0; }
 .tweet-row.focal { flex-direction: column; padding: 0; }
 .focal-header { display: flex; align-items: center; padding: 14px 14px 8px; gap: 12px; }
 .focal-header .avatar { width: 46px; height: 46px; border-radius: 23px; flex-shrink: 0; }
@@ -1866,6 +1908,7 @@ def quote_block_html(qt, depth=0):
     if not media and qt.get("card"):
         qcard = f'<div class="quote-card">{card_html(qt["card"])}</div>'
         has_media_cls = " has-media"
+    qpoll = poll_html(qt.get("poll")) if qt.get("poll") else ""
     # A quote tweet can itself quote another tweet ("quote of a quote"); when
     # that inner quote was resolved (see resolve_quote_chain), render it as a
     # smaller quote-block nested inside this one, same as X does.
@@ -1884,6 +1927,7 @@ def quote_block_html(qt, depth=0):
   <div class="quote-text">{text}</div>
   {media}
   {qcard}
+  {qpoll}
   {nested}
   {bw_html}
 </div>"""
@@ -2088,6 +2132,77 @@ def card_html(card):
   </div>
 </a>'''
 
+def _poll_time_left(end_iso):
+    """Human-readable countdown for a poll's end_datetime_utc, e.g. '3 days left',
+    '4h left', '12m left'. Returns 'Final results' once the deadline has passed."""
+    if not end_iso:
+        return ""
+    end_dt = None
+    for _fmt in ("%Y-%m-%dT%H:%M:%S.%fZ", "%Y-%m-%dT%H:%M:%SZ"):
+        try:
+            end_dt = datetime.strptime(end_iso, _fmt).replace(tzinfo=timezone.utc)
+            break
+        except ValueError:
+            pass
+    if end_dt is None:
+        return ""
+    diff = int((end_dt - datetime.now(timezone.utc)).total_seconds())
+    if diff <= 0:
+        return "Final results"
+    days, rem = divmod(diff, 86400)
+    hours, rem = divmod(rem, 3600)
+    mins = rem // 60
+    if days > 0:
+        return f"{days} day{'s' if days != 1 else ''} left"
+    if hours > 0:
+        return f"{hours}h left"
+    return f"{max(mins, 1)}m left"
+
+def poll_html(poll):
+    """Render a Twitter/X poll card: option bars sized to their vote share,
+    the leading option highlighted in the theme's accent color, everything
+    else in the shared grey panel background, and a footer showing the
+    vote total plus either time remaining (active) or 'Final results'."""
+    if not poll or not poll.get("choices"):
+        return ""
+    import html as _html
+    choices    = poll["choices"]
+    total      = poll.get("total_votes", 0)
+    is_final   = poll.get("counts_are_final", False)
+    top_count  = max((c["count"] for c in choices), default=0)
+    footer_r   = "Final results" if is_final else (_poll_time_left(poll.get("end_datetime")) or "")
+
+    rows = []
+    for c in choices:
+        pct   = c.get("pct", 0)
+        label = _html.escape(c["label"])
+        # The leading choice by vote count gets the accent-colored bar,
+        # whether the poll is still active or already closed. The Winner
+        # badge, though, only makes sense once results are final.
+        is_top = total > 0 and c["count"] == top_count
+        bar_class = "poll-bar-winner" if is_top else "poll-bar"
+        # not working, but cleaner anyways
+        badge = ('<div class="poll-badge">Winner</div>' if is_top and is_final else "")
+        rows.append(f'''<div class="poll-option">
+      <div class="{bar_class}" style="width:{pct:.4f}%;"></div>
+      <div class="poll-option-row">
+        <span class="poll-option-label{" poll-option-label-winner" if is_top else ""}">{label}</span>
+        <span class="poll-option-right">
+          <span class="poll-option-votes{" poll-option-votes-winner" if is_top else ""}">{fmt(c["count"])} vote{"s" if c["count"] != 1 else ""}</span>
+          <span class="poll-option-pct{" poll-option-pct-winner" if is_top else ""}">{pct:.0f}%</span>
+        </span>
+      </div>
+      {badge}
+    </div>''')
+
+    return f'''<div class="poll">
+    {"".join(rows)}
+    <div class="poll-footer">
+      <span>{fmt(total)} vote{"s" if total != 1 else ""}</span>
+      <span>{footer_r}</span>
+    </div>
+  </div>'''
+
 
 def tweet_row_html(t, is_parent=False, no_source=False, is_reply=False):
     if t.get("__tombstone"):
@@ -2149,6 +2264,7 @@ def tweet_row_html(t, is_parent=False, no_source=False, is_reply=False):
         replying = f'<div class="replying-to">Replying to {links}</div>'
 
     card_block = card_html(t.get("card")) if not t.get("ext_entities", {}).get("media") else ""
+    poll_block = poll_html(t.get("poll"))
     grok_html = grok_card_html(t.get("grok_question", ""), t.get("grok_answer", ""))
     qt_html = quote_block_html(t["quoted"]) if t.get("quoted") else ""
     bw_html = _birdwatch_html(t)
@@ -2204,6 +2320,7 @@ def tweet_row_html(t, is_parent=False, no_source=False, is_reply=False):
     {media_block}
     {grok_html}
     {card_block}
+    {poll_block}
     {qt_html}
     {bw_html}
     {broadcast_html}
@@ -2227,6 +2344,7 @@ def tweet_row_html(t, is_parent=False, no_source=False, is_reply=False):
     {media_block}
     {grok_html}
     {card_block}
+    {poll_block}
     {qt_html}
     {bw_html}
     {broadcast_html}
