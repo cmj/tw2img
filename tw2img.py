@@ -717,7 +717,7 @@ def _tombstone_label_html(sn, reason, text, tid=None, permalink=""):
         post = (f'<a href="{generic_link}" style="color:inherit;text-decoration:none;"> no longer exists.</a>'
                 if generic_link else " no longer exists.")
         return pre + mid + post
-    label = f"This Tweet from @{sn} was {reason}." if sn else (text or f"This Tweet was {reason}.")
+    label = f"This Tweet from @{sn} is {reason}." if sn else (text or f"This Tweet is {reason}.")
     return f'<a href="{generic_link}" style="color:inherit;text-decoration:none;">{label}</a>' if generic_link else label
 
 def _parse_tweet_result(result, user_parser):
