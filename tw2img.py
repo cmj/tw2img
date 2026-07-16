@@ -439,11 +439,10 @@ def resolve_quote_chain(qt, headers, depth=0, max_depth=3, quiet=True):
         try:
             data = fetch_tweet_result(qt["id"], headers)
             result = data["data"]["tweetResult"]["result"]
-            if result.get("__typename") == "TweetTombstone":
-                tombstone_text = (result.get("tombstone", {}).get("text", {}).get("text")
-                                  or "This tweet is unavailable.")
+            if result.get("__typename") in ("TweetTombstone", "TweetUnavailable"):
+                reason, tombstone_text = _classify_unavailable(result)
                 return {"__tombstone": True, "screen_name": qt.get("screen_name", ""), "text": tombstone_text,
-                        "permalink": qt.get("permalink", "")}
+                        "permalink": qt.get("permalink", ""), "reason": reason}
             resolved = _parse_tweet_result(result, _parse_user)
             if resolved:
                 resolved["quoted"] = resolve_quote_chain(resolved.get("quoted"), headers, depth + 1, max_depth, quiet)
@@ -672,21 +671,28 @@ def _permalink_screen_name(leg):
     m = re.search(r"(?:twitter|x)\.com/([^/]+)/status", expanded)
     return (m.group(1) if m else ""), expanded
 
+_PROTECTED_MSG = "You\u2019re unable to view this Tweet because this account owner limits who can view their Tweets."
+
 def _classify_unavailable(res):
     """Given a TweetTombstone or TweetUnavailable result object, return
     (reason, text). reason is a short lowercase word/token ("suspended",
-    "deleted", "removed", "no_account", "unavailable") suitable for use in
-    "This Tweet [is/was] ... {reason}.", text is a fallback human-readable
-    message for when we don't have a screen_name to build that sentence."""
+    "deleted", "removed", "no_account", "protected", "unavailable") suitable
+    for use in "This Tweet [is/was] ... {reason}.", text is a fallback
+    human-readable message for when we don't have a screen_name to build
+    that sentence."""
     typename = res.get("__typename")
     if typename == "TweetUnavailable":
         reason = (res.get("reason") or "unavailable").lower()
+        if reason == "protected":
+            return reason, _PROTECTED_MSG
         verb = "was" if reason in ("deleted", "removed") else "is"
         return reason, f"This Tweet {verb} {reason}."
     
     if typename == "TweetTombstone":
         text = res.get("tombstone", {}).get("text", {}).get("text", "") or "This tweet is unavailable."
         low = text.lower()
+        if "limits who can view" in low or "account owner limits" in low:
+            return "protected", _PROTECTED_MSG
         if "suspend" in low:
             reason = "suspended"
         elif "account" in low and "no longer exist" in low:
@@ -726,7 +732,11 @@ def _tombstone_label_html(sn, reason, text, tid=None, permalink=""):
         post = (f'<a href="{generic_link}" style="color:inherit;text-decoration:none;"> no longer exists.</a>'
                 if generic_link else " no longer exists.")
         return pre + mid + post
-    
+
+    if reason == "protected":
+        label = text or _PROTECTED_MSG
+        return f'<a href="{generic_link}" style="color:inherit;text-decoration:none;">{label}</a>' if generic_link else label
+
     verb = "was" if reason in ("deleted", "removed") else "is"
     
     label = f"This Tweet from @{sn} {verb} {reason}." if sn else (text or f"This Tweet {verb} {reason}.")
@@ -855,11 +865,16 @@ def _parse_tweet_result(result, user_parser):
             total_votes = sum(c["count"] for c in choices)
             for c in choices:
                 c["pct"] = (c["count"] / total_votes * 100) if total_votes else 0
+            # counts_are_final comes through as a real boolean_value, not a string
+            cf_raw = bv.get("counts_are_final", {})
+            counts_are_final = cf_raw.get("boolean_value")
+            if counts_are_final is None:
+                counts_are_final = str(cf_raw.get("string_value", "")).lower() == "true"
             if choices:
                 poll = {
                     "choices":          choices,
                     "total_votes":      total_votes,
-                    "counts_are_final": sv("counts_are_final").lower() == "true",
+                    "counts_are_final": bool(counts_are_final),
                     "end_datetime":     sv("end_datetime_utc"),
                 }
 
@@ -1160,6 +1175,8 @@ def format_tweet_line(tweet, nsfw=False, birdwatch=False):
         reason = tweet.get("reason", "unavailable")
         if reason == "no_account" and sn:
             label = f"This account @{sn} no longer exists."
+        elif reason == "protected":
+            label = tweet.get("text") or _PROTECTED_MSG
         elif sn:
             label = f"This Tweet from @{sn} was {reason}."
         else:
@@ -1502,7 +1519,7 @@ def parody_label_html(label):
     return (
         f'<div class="parody-label" style="display:inline-flex;align-items:center;gap:3px;'
         f'color:var(--grey);font-size:calc(12px * var(--fs));line-height:1;margin-top:1px;">'
-        f'{icon_svg("mask", 12, "var(--grey)")}'
+        f'<span style="display:inline-flex;position:relative;top:-1px;">{icon_svg("mask", 12, "var(--grey)")}</span>'
         f'<span>{label} account</span>'
         f'</div>'
     )
@@ -1667,13 +1684,12 @@ SHARED_CSS = """
 .poll-bar-winner { position: absolute; top: 0; left: 0; bottom: 0; background: var(--acc); border-radius: 8px 0 0 8px; }
 .poll-option-row { position: relative; z-index: 1; display: flex; justify-content: space-between; align-items: center; gap: 8px; }
 .poll-option-label { font-size:calc(15px * var(--fs)); color: var(--fg); font-weight: 400; }
-.poll-option-label-winner { color: #ffffff; font-weight: 700; }
+.poll-option-label-winner { color: var(--fg); font-weight: 700; }
 .poll-option-right { display: flex; align-items: baseline; gap: 8px; flex-shrink: 0; }
 .poll-option-votes { font-size:calc(13px * var(--fs)); color: var(--grey); font-weight: 400; white-space: nowrap; }
-.poll-option-votes-winner { color: rgba(255,255,255,0.85); }
+.poll-option-votes-winner { color: var(--fg); opacity: 0.8; }
 .poll-option-pct { position: relative; z-index: 1; font-size:calc(14px * var(--fs)); color: var(--grey); font-weight: 400; flex-shrink: 0; }
-.poll-option-pct-winner { color: #ffffff !important; font-weight: 700 !important; }
-.poll-badge { position: relative; z-index: 1; margin-top: 4px; font-size:calc(13px * var(--fs)); font-weight: 600; color: var(--grey); }
+.poll-option-pct-winner { color: var(--fg) !important; font-weight: 700 !important; }
 .poll-footer { display: flex; justify-content: space-between; align-items: center; font-size:calc(13px * var(--fs)); color: var(--grey); padding: 2px 2px 0; }
 .tweet-row.focal { flex-direction: column; padding: 0; }
 .focal-header { display: flex; align-items: center; padding: 14px 14px 8px; gap: 12px; }
@@ -1859,8 +1875,8 @@ def quote_block_html(qt, depth=0):
         reason = qt.get("reason", "unavailable")
         inner = _tombstone_label_html(sn, reason, qt.get("text", "This tweet is unavailable."),
                                        tid=qt.get("id"), permalink=qt.get("permalink", ""))
-        return f'''<div class="quote-block" style="display:flex;align-items:center;justify-content:center;padding:16px 14px;">
-  <span style="color:#7b93a8;font-size:calc(15px * var(--fs));line-height:1.4;text-align:center;">{inner}</span>
+        return f'''<div class="quote-block" style="display:flex;align-items:center;justify-content:left;padding:10px 14px;">
+  <span style="color:var(--accent);font-size:calc(15px * var(--fs));line-height:1.4;text-align:left;">{inner}</span>
 </div>'''
     if qt.get("__stub"):
         # Nested quote X never hydrated for us (a "quote of a quote") and we
@@ -2160,9 +2176,9 @@ def _poll_time_left(end_iso):
 
 def poll_html(poll):
     """Render a Twitter/X poll card: option bars sized to their vote share,
-    the leading option highlighted in the theme's accent color, everything
-    else in the shared grey panel background, and a footer showing the
-    vote total plus either time remaining (active) or 'Final results'."""
+    the leading option highlighted with the --acc color, everything else in
+    the shared grey panel background, and a footer showing the vote total
+    plus either time remaining (active) or 'Final results'."""
     if not poll or not poll.get("choices"):
         return ""
     import html as _html
@@ -2176,13 +2192,10 @@ def poll_html(poll):
     for c in choices:
         pct   = c.get("pct", 0)
         label = _html.escape(c["label"])
-        # The leading choice by vote count gets the accent-colored bar,
-        # whether the poll is still active or already closed. The Winner
-        # badge, though, only makes sense once results are final.
+        # The leading choice by vote count gets the highlighted bar, whether
+        # the poll is still active or already closed.
         is_top = total > 0 and c["count"] == top_count
         bar_class = "poll-bar-winner" if is_top else "poll-bar"
-        # not working, but cleaner anyways
-        badge = ('<div class="poll-badge">Winner</div>' if is_top and is_final else "")
         rows.append(f'''<div class="poll-option">
       <div class="{bar_class}" style="width:{pct:.4f}%;"></div>
       <div class="poll-option-row">
@@ -2192,7 +2205,6 @@ def poll_html(poll):
           <span class="poll-option-pct{" poll-option-pct-winner" if is_top else ""}">{pct:.0f}%</span>
         </span>
       </div>
-      {badge}
     </div>''')
 
     return f'''<div class="poll">
@@ -2211,8 +2223,8 @@ def tweet_row_html(t, is_parent=False, no_source=False, is_reply=False):
         inner  = _tombstone_label_html(sn, reason, t.get("text") or "", tid=t.get("id"))
         line = "<div class='left-col' style='height:14px;margin-top:4px;'><div class=\"thread-line\"></div></div>" if is_parent else ""
         return f"""<div class="tweet-row" style="flex-direction:column;">
-  <div class="quote-block" style="display:flex;align-items:center;justify-content:center;padding:16px 14px;margin:0;">
-    <span style="color:#7b93a8;font-size:calc(15px * var(--fs));line-height:1.4;text-align:center;">{inner}</span>
+  <div class="quote-block" style="display:flex;align-items:center;justify-content:left;padding:10px 14px;margin:0;">
+    <span style="color:var(--accent);font-size:calc(15px * var(--fs));line-height:1.4;text-align:left;">{inner}</span>
   </div>
   {line}
 </div>"""
@@ -2704,7 +2716,8 @@ async def _main():
     m = re.search(r"(\d+)", inp)
     if m: fid = m.group(1)
 
-    if "threaded_conversation_with_injections_v2" in data.get("data", {}):
+    came_from_detail = "threaded_conversation_with_injections_v2" in data.get("data", {})
+    if came_from_detail:
         if not fid:
             instr = data["data"]["threaded_conversation_with_injections_v2"]["instructions"]
             entries = next((i["entries"] for i in instr if i.get("type") == "TimelineAddEntries"), [])
@@ -2713,6 +2726,19 @@ async def _main():
         tweets = parse_tweet_detail(data, fid)
     else:
         tweets = parse_tweet_result_single(data)
+
+    if (came_from_detail and headers and len(tweets) == 1
+            and tweets[0].get("__tombstone") and tweets[0].get("id") == fid
+            and tweets[0].get("reason") == "unavailable"):
+        try:
+            data2 = fetch_tweet_result(fid, headers)
+            result2 = data2["data"]["tweetResult"]["result"]
+            if result2.get("__typename") in ("TweetTombstone", "TweetUnavailable"):
+                reason2, text2 = _classify_unavailable(result2)
+                if reason2 != "unavailable":
+                    tweets[0] = dict(tweets[0], reason=reason2, text=text2)
+        except Exception:
+            pass
 
     if not tweets:
         # Shouldn't happen any more (parsers now return a tombstone placeholder
