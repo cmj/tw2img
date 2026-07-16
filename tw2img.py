@@ -305,20 +305,28 @@ def build_filename_tokens(focal, tweet_id, user_name):
     """Build the token dict used by --filename-format / filename_format config.
 
     Tokens:
-      %id     - tweet id
+      %id     - the id that identifies this archived entry. For a normal
+                tweet this is the tweet's own status id. For a retweet
+                (rt_by_user set) this is the *retweet's own* status id --
+                not the id of the original tweet being retweeted -- so that
+                two different users retweeting the same original tweet
+                don't collide onto the same filename.
       %user   - focal tweet author's screen_name
       %rtby   - retweeter's screen_name (only set if this is a "quote-style" RT with rt_by_user)
       %rtorig - original tweet author's screen_name (only set if this is a retweet)
       %rt     - literal 'rt' if this is a retweet at all, else ''
     """
-    tokens = {"id": str(tweet_id), "user": user_name, "rtby": "", "rtorig": "", "rt": ""}
+    resolved_id = tweet_id
+    tokens = {"user": user_name, "rtby": "", "rtorig": "", "rt": ""}
     if not focal.get("__tombstone") and (focal.get("rt_by_user") or focal.get("is_rt")):
         tokens["rt"] = "rt"
         if focal.get("rt_by_user"):
             tokens["rtby"] = focal["rt_by_user"]["screen_name"]
             tokens["rtorig"] = focal["user"]["screen_name"]
+            resolved_id = focal.get("rt_id") or tweet_id
         elif focal.get("rt_orig_sn"):
             tokens["rtorig"] = focal["rt_orig_sn"]
+    tokens["id"] = str(resolved_id)
     return tokens
 
 
@@ -837,6 +845,13 @@ def _parse_tweet_result(result, user_parser):
         original = _parse_tweet_result(rt_result, user_parser)
         if original:
             original["rt_by_user"] = user
+            # The outer object here is the retweet event itself (its own
+            # rest_id, distinct from the original tweet's rest_id we just
+            # parsed into `original["id"]`). Keep it around so filenames
+            # can key off of the actual retweet, not the original tweet --
+            # otherwise every retweet of the same original tweet collapses
+            # onto one filename and only the last one archived survives.
+            original["rt_id"] = result.get("rest_id") or leg.get("id_str")
             return original
 
     rt_orig_sn = None
@@ -2901,7 +2916,8 @@ async def _main():
         if focal.get("rt_by_user"):
             rt_by = focal["rt_by_user"]["screen_name"]
             orig  = focal["user"]["screen_name"]
-            output = f"{rt_by}-rt-{orig}-{tweet_id}.png"
+            rt_id = focal.get("rt_id") or tweet_id
+            output = f"{rt_by}-rt-{orig}-{rt_id}.png"
         elif focal.get("rt_orig_sn"):
             orig  = focal["rt_orig_sn"]
             output = f"{user_name}-rt-{orig}-{tweet_id}.png"
