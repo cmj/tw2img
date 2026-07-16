@@ -66,7 +66,7 @@ def load_config(extra_path=None):
       2. tw2img.conf in current directory (only if it exists)
       3. extra_path                     (supplied via -c / --config flag)
     Returns a merged dict of key->value strings from the [tw2img] section."""
-    cfg = configparser.ConfigParser()
+    cfg = configparser.ConfigParser(interpolation=None)
     sources = []
     if DEFAULT_CONFIG_PATH.exists():
         sources.append(DEFAULT_CONFIG_PATH)
@@ -300,6 +300,38 @@ def _req(url, headers, params=None):
     req = urllib.request.Request(url, headers=headers)
     with urllib.request.urlopen(req) as r:
         return json.loads(r.read())
+
+def build_filename_tokens(focal, tweet_id, user_name):
+    """Build the token dict used by --filename-format / filename_format config.
+
+    Tokens:
+      %id     - tweet id
+      %user   - focal tweet author's screen_name
+      %rtby   - retweeter's screen_name (only set if this is a "quote-style" RT with rt_by_user)
+      %rtorig - original tweet author's screen_name (only set if this is a retweet)
+      %rt     - literal 'rt' if this is a retweet at all, else ''
+    """
+    tokens = {"id": str(tweet_id), "user": user_name, "rtby": "", "rtorig": "", "rt": ""}
+    if not focal.get("__tombstone") and (focal.get("rt_by_user") or focal.get("is_rt")):
+        tokens["rt"] = "rt"
+        if focal.get("rt_by_user"):
+            tokens["rtby"] = focal["rt_by_user"]["screen_name"]
+            tokens["rtorig"] = focal["user"]["screen_name"]
+        elif focal.get("rt_orig_sn"):
+            tokens["rtorig"] = focal["rt_orig_sn"]
+    return tokens
+
+
+def apply_filename_format(fmt, tokens):
+    """Substitute %token placeholders in *fmt*, then clean up any leftover
+    doubled/leading/trailing '-' caused by empty tokens (e.g. non-RT tweets
+    using a format that includes %rtby)."""
+    name = fmt
+    for key, val in tokens.items():
+        name = name.replace(f"%{key}", val or "")
+    name = re.sub(r"-{2,}", "-", name).strip("-_ ")
+    return name or tokens.get("id", "tweet")
+
 
 def resolve_output_path(path, mode):
     """Apply duplicate_files logic to *path*.
@@ -2613,6 +2645,12 @@ async def _main():
                         "Playwright is skipped entirely")
     p.add_argument("--output-dir", default=conf.get("output_dir") or None, metavar="DIR",
                    help="Directory to save output PNG (default: current working directory)")
+    p.add_argument("--filename-format", default=conf.get("filename_format") or None, metavar="FMT",
+                   help="Custom auto-generated filename (without extension). Tokens: "
+                        "%%user (author screen_name), %%id (tweet id), %%rtby (retweeter, if RT), "
+                        "%%rtorig (original author, if RT), %%rt ('rt' if a retweet, else empty). "
+                        "e.g. '%%id' or '%%id-%%user'. Default: '%%user-%%id' (or the built-in RT-aware naming). "
+                        "Ignored if an explicit output path is given.")
     p.add_argument("--imgur",      action="store_true", default=_b("imgur"), help="Upload PNG to imgur after rendering")
     p.add_argument("--dump-json",  action="store_true", default=_b("dump_json"), help="Print raw API JSON to stdout and exit")
     p.add_argument("--print-line", action="store_true", default=_b("print_line"),
@@ -2854,7 +2892,12 @@ async def _main():
 
     user_name = focal.get("screen_name") if focal.get("__tombstone") else focal["user"]["screen_name"]
     user_name = user_name or "unknown"
-    if not focal.get("__tombstone") and not args.output and (focal.get("rt_by_user") or focal.get("is_rt")):
+    if args.output:
+        output = args.output
+    elif args.filename_format:
+        tokens = build_filename_tokens(focal, tweet_id, user_name)
+        output = apply_filename_format(args.filename_format, tokens) + ".png"
+    elif not focal.get("__tombstone") and (focal.get("rt_by_user") or focal.get("is_rt")):
         if focal.get("rt_by_user"):
             rt_by = focal["rt_by_user"]["screen_name"]
             orig  = focal["user"]["screen_name"]
@@ -2865,7 +2908,7 @@ async def _main():
         else:
             output = f"{user_name}-rt-{tweet_id}.png"
     else:
-        output = args.output or f"{user_name}-{tweet_id}.png"
+        output = f"{user_name}-{tweet_id}.png"
 
     if args.output_dir and not os.path.isabs(output) and not os.path.dirname(output):
         output = os.path.join(os.path.expanduser(args.output_dir), output)
