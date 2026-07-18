@@ -21,7 +21,7 @@ Notes:
     --no-nested-quotes    don't fetch a quoted tweet's own quoted tweet (shown as a link instead)
     --with-note            add the top-voted proposed MISLEADING Community Note (labelled 'Proposed' if not yet shown on Twitter)
     --with-notes           add every proposed Community Note (misleading and not-misleading) for the tweet
-    --guest for no authentication (no account needed); full conversation context and replies still included
+    --guest for no authentication, won't see conversation context
     --user <screen_name> to fetch latest tweet from user
     export TWITTER_AUTH_TOKEN=<auth_token>
     export TWITTER_CSRF_TOKEN=<x_csrf_token>
@@ -81,13 +81,16 @@ def load_config(extra_path=None):
     cfg.read([str(s) for s in sources])
     return dict(cfg["tw2img"]) if "tw2img" in cfg else {}
 
-BEARER = (
-    "AAAAAAAAAAAAAAAAAAAAA"
-    "GUqDgEAAAAAxxUxnzaWND"
-    "%2BqIZQZtUiIn0WBOqo"
-    "%3DwUQLAtFWub7fLUrVcS6VW"
-    "j6bGYIN54DofXGWKApKmKWQjldULK"
-)
+BEARER = "AAAAAAAAAAAAAAAAAAAAANRILgAAAAAAnNwIzUejRCOuH5E6I8xnZz4puTs%3D1Zv7ttfk8LF81IUq16cHjhLTvJu4FA33AGWWjCpTnA"
+BEARER2 = "AAAAAAAAAAAAAAAAAAAAACHguwAAAAAAaSlT0G31NDEyg%2BSnBN5JuyKjMCU%3Dlhg0gv0nE7KKyiJNEAojQbn8Y3wJm1xidDK7VnKGBP4ByJwHPb"
+
+# Optional override, set at runtime from --master-token / TWITTER_MASTER_TOKEN env /
+# master_token config key (see main()). When set, a single token is used everywhere
+# BEARER/BEARER2 would otherwise be used, which also unlocks UserTweetsAndReplies,
+# full TweetDetail context, and BirdwatchFetchNotes in --guest mode. Left as None
+# (i.e. the plain public BEARER/BEARER2 pair above) unless explicitly supplied --
+# not something this script advertises or ships a value for.
+MASTER_TOKEN = None
 
 UA = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
 
@@ -379,18 +382,18 @@ def resolve_url(url):
 
 def get_guest_token():
     req = urllib.request.Request(GUEST_TOKEN_URL, method="POST",
-        headers={"Authorization": f"Bearer {BEARER}", "User-Agent": UA})
+        headers={"Authorization": f"Bearer {MASTER_TOKEN or BEARER}", "User-Agent": UA})
     with urllib.request.urlopen(req) as r:
         return json.loads(r.read())["guest_token"]
 
 def auth_headers(auth_token, csrf_token):
-    return {"Authorization": f"Bearer {BEARER}", "User-Agent": UA,
+    return {"Authorization": f"Bearer {MASTER_TOKEN or BEARER}", "User-Agent": UA,
             "x-csrf-token": csrf_token, "x-twitter-active-user": "yes",
             "x-twitter-auth-type": "OAuth2Session", "x-twitter-client-language": "en",
             "Cookie": f"auth_token={auth_token}; ct0={csrf_token}"}
 
 def guest_headers(guest_token):
-    return {"Authorization": f"Bearer {BEARER}", "User-Agent": UA,
+    return {"Authorization": f"Bearer {MASTER_TOKEN or BEARER}", "User-Agent": UA,
             "x-guest-token": guest_token}
 
 def fetch_tweet_detail(tweet_id, headers):
@@ -514,7 +517,7 @@ def resolution_headers(args, headers):
 def fetch_user_id(screen_name, headers):
     ubsn_headers = dict(headers)
     if "x-twitter-auth-type" in headers:
-        ubsn_headers["Authorization"] = f"Bearer {BEARER}"
+        ubsn_headers["Authorization"] = f"Bearer {MASTER_TOKEN or BEARER}"
     data = _req(USER_BY_SCREEN_NAME_URL, ubsn_headers, {
         "variables": json.dumps({"screen_name": screen_name, "includePromotedContent": False, "withBirdwatchNotes": True, "withVoice": True}),
         "features":  json.dumps(USER_BY_SCREEN_NAME_FEAT),
@@ -524,21 +527,22 @@ def fetch_user_id(screen_name, headers):
 def fetch_nth_tweet_id(user_id, headers, n=1, with_replies=True):
     """Return the Nth tweet (1-based) from a user's timeline.
 
-    When with_replies=True (default): uses UserTweetsAndReplies so the user's
-    own replies are included alongside original tweets and RTs.
+    When with_replies=True (default, requires auth): uses UserTweetsAndReplies so
+    the user's own replies are included alongside original tweets and RTs.
     When with_replies=False: uses UserTweets and skips replies.
 
-    Both modes always skip RTs. Works the same in guest mode as authenticated
-    mode -- the unified bearer token covers UserTweetsAndReplies too.
+    Both modes always skip RTs. guest mode forces with_replies=False since
+    UserTweetsAndReplies requires authentication -- unless MASTER_TOKEN is
+    set, in which case the single token covers this endpoint too.
     """
     if with_replies:
         url  = USER_TWEETS_AND_REPLIES_URL
         feat = USER_TWEETS_AND_REPLIES_FEAT
         variables = {"userId": user_id, "count": 20, "includePromotedContent": True,
                      "withCommunity": True, "withVoice": True}
-        # Previously required its own bearer token (BEARER2); the unified
-        # token now works for this endpoint too.
-        headers = dict(headers, Authorization=f"Bearer {BEARER}")
+        # This endpoint requires its own bearer token, unless MASTER_TOKEN
+        # is set, which covers it directly.
+        headers = dict(headers, Authorization=f"Bearer {MASTER_TOKEN or BEARER2}")
     else:
         url  = USER_TWEETS_URL
         feat = USER_TWEETS_FEAT
@@ -2642,7 +2646,7 @@ async def _main():
     p.add_argument("--with-replies", action=argparse.BooleanOptionalAction,
                    default=_b("with_replies"),
                    help="Include the user's own replies when fetching @user timeline "
-                        "(default: on)")
+                        "(default: on; requires auth - silently ignored in guest mode)")
     p.add_argument("--width",      type=int, default=int(conf.get("width", 598)))
     p.add_argument("--font-scale", type=float, default=float(conf.get("font_scale", 1.0)), metavar="N",
                    help="Scale all text size by this factor, e.g. 1.15 for 15%% bigger (default: 1.0)")
@@ -2684,6 +2688,9 @@ async def _main():
                         "Examples: --trans en  |  --trans ja:en  |  --trans auto:fr")
     p.add_argument("--auth-token", default=conf.get("auth_token") or os.environ.get("TWITTER_AUTH_TOKEN"), help="or use envar TWITTER_AUTH_TOKEN")
     p.add_argument("--csrf-token", default=conf.get("csrf_token") or os.environ.get("TWITTER_CSRF_TOKEN"), help="or use envar TWITTER_CSRF_TOKEN")
+    p.add_argument("--master-token",
+                   default=conf.get("master_token") or os.environ.get("TWITTER_MASTER_TOKEN"),
+                   help=argparse.SUPPRESS)
     p.add_argument("--view",   action="store_true", default=_b("view"),
                    help="Open the saved file with the configured viewer after saving")
     p.add_argument("--viewer", default=conf.get("viewer") or None, metavar="CMD",
@@ -2694,6 +2701,9 @@ async def _main():
     p.add_argument("-q", "--quiet", action="store_true", default=_b("quiet"),
                    help="Suppress all progress messages (stderr and status prints).")
     args = p.parse_args()
+
+    global MASTER_TOKEN
+    MASTER_TOKEN = args.master_token or None
 
     # --view-html is shorthand for: auto-save HTML next to the PNG, then open in browser.
     # We defer the actual save/open until after the output path is resolved below.
@@ -2732,10 +2742,16 @@ async def _main():
                 sys.exit("Error: --auth-token/--csrf-token required (or use --guest)")
             headers = auth_headers(args.auth_token, args.csrf_token)
         user_id = fetch_user_id(args.user, headers)
-        tweet_id = fetch_nth_tweet_id(user_id, headers, n=tweet_index, with_replies=args.with_replies)
+        # UserTweetsAndReplies requires auth; fall back to UserTweets in guest
+        # mode, unless MASTER_TOKEN is set (which covers the endpoint directly).
+        use_with_replies = args.with_replies and (not args.guest or bool(MASTER_TOKEN))
+        tweet_id = fetch_nth_tweet_id(user_id, headers, n=tweet_index, with_replies=use_with_replies)
         if not tweet_id:
             sys.exit(f"Error: no suitable tweet found for @{args.user}")
-        data = fetch_tweet_detail(tweet_id, headers)
+        if args.guest and not MASTER_TOKEN:
+            data = fetch_tweet_result(tweet_id, headers)
+        else:
+            data = fetch_tweet_detail(tweet_id, headers)
         inp = tweet_id
     elif inp == "-":
         data = json.load(sys.stdin)
@@ -2755,11 +2771,12 @@ async def _main():
         if args.guest:
             gt = get_guest_token()
             headers = guest_headers(gt)
+            data = fetch_tweet_detail(tweet_id, headers) if MASTER_TOKEN else fetch_tweet_result(tweet_id, headers)
         else:
             if not args.auth_token or not args.csrf_token:
                 sys.exit("Error: --auth-token/--csrf-token required (or use --guest)")
             headers = auth_headers(args.auth_token, args.csrf_token)
-        data = fetch_tweet_detail(tweet_id, headers)
+            data = fetch_tweet_detail(tweet_id, headers)
 
     if args.dump_json:
         print(json.dumps(data, indent=2))
@@ -2838,6 +2855,9 @@ async def _main():
     if args.with_note or args.with_notes:
         if not focal.get("has_birdwatch_notes"):
             pass  # tweet has no note activity; skip the extra request entirely
+        elif args.guest and not MASTER_TOKEN:
+            if not args.quiet:
+                print("Note: --with-note/--with-notes requires auth; skipping in --guest mode.", file=sys.stderr)
         else:
             _bw_headers = resolution_headers(args, headers)
             if _bw_headers:
