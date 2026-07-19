@@ -2684,6 +2684,10 @@ async def _main():
                    help="Scale all text size by this factor, e.g. 1.15 for 15%% bigger (default: 1.0)")
     p.add_argument("--css",        default=conf.get("css") or None, help="File to override the theme (ex: nitter/public/css/themes/pleroma.css)")
     p.add_argument("--nitter",     action="store_true", default=_b("nitter"), help="Use Nitter default theme")
+    p.add_argument("--nitter-url", default=None, metavar="URL",
+                   help="Override the base URL used for @mention/#hashtag/tweet hyperlinks "
+                        "(same as the nitter_url config key; pass an empty string to disable "
+                        "hyperlinking entirely). Takes priority over the config file.")
     p.add_argument("--html-only",  action="store_true", default=_b("html_only"), help="Print HTML to stdout instead of rendering PNG")
     p.add_argument("--save-html",  nargs="?", const="", default=conf.get("save_html") or None,
                    metavar="FILE",
@@ -2733,6 +2737,9 @@ async def _main():
     p.add_argument("-q", "--quiet", action="store_true", default=_b("quiet"),
                    help="Suppress all progress messages (stderr and status prints).")
     args = p.parse_args()
+
+    if args.nitter_url is not None:
+        _TWEET_BASE_URL = args.nitter_url.rstrip("/")
 
     global MASTER_TOKEN
     MASTER_TOKEN = args.master_token or None
