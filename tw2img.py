@@ -108,26 +108,8 @@ GUEST_TOKEN_URL                = "https://api.twitter.com/1.1/guest/activate.jso
 # This is ONLY FOR HTML rendered output.
 _TWEET_BASE_URL = "https://nitter.net"
 
-def _nitter_link(url):
-    """Rewrite a twitter.com/x.com tweet permalink to use the configured
-    nitter_url base (see _TWEET_BASE_URL / tw2img.conf), preserving the
-    rest of the URL (path, query string, etc). Falls back to the original
-    URL if it doesn't look like a twitter.com/x.com link, or if nitter_url
-    has been explicitly disabled (set to an empty string in the config)."""
-    if not url or not _TWEET_BASE_URL:
-        return url
-    return re.sub(r"^https?://(?:www\.)?(?:twitter|x)\.com", _TWEET_BASE_URL, url)
-
-def _tweet_permalink(screen_name, tweet_id):
-    """Build a permalink to a tweet under the configured nitter_url base
-    (defaults to nitter.net; see _TWEET_BASE_URL). Returns "" if either
-    piece is missing or hyperlinking has been disabled (nitter_url set to
-    an empty string), so callers can skip wrapping in an <a> tag."""
-    if not _TWEET_BASE_URL or not screen_name or not tweet_id:
-        return ""
-    return f"{_TWEET_BASE_URL}/{screen_name}/status/{tweet_id}"
-
 # rankingMode: Likes, Recency, Relevance
+#   Likes is used for grabbing --top-reply/--top-replies <#>
 TWEET_DETAIL_VARS   = lambda id: {"focalTweetId": id, "with_rux_injections": True,
     "rankingMode": "Likes", "includePromotedContent": False, "withCommunity": True,
     "withQuickPromoteEligibilityTweetFields": False, "withBirdwatchNotes": True, "withVoice": True}
@@ -259,126 +241,12 @@ BIRDWATCH_FETCH_NOTES_FEAT = {
     "responsive_web_graphql_skip_user_profile_image_extensions_enabled": True,
 }
 
-def open_with_viewer(path, viewer):
-    """Open *path* with the configured viewer command.
-
-    The viewer string may be:
-      - A plain command name / path, e.g. ``viewnior`` or ``eog``
-      - A command with a placeholder ``{}``, e.g. ``kitty +icat {}``
-      - Multiple words without ``{}``, in which case the file is appended, e.g.
-        ``firefox`` becomes ``firefox saved.html``
-
-    The process is launched detached (fire-and-forget for GUI apps) or
-    waited for in-place (terminal viewers such as ``kitty +icat``).
-    """
-    import shlex, subprocess
-    viewer = viewer.strip()
-    if "{}" in viewer:
-        cmd = shlex.split(viewer.replace("{}", shlex.quote(str(path))))
-    else:
-        cmd = shlex.split(viewer) + [str(path)]
-
-    # Terminal viewers (kitty +icat, chafa, viu, timg, etc) should run in-process so
-    # their output appears in the current terminal; GUI apps are detached.
-    terminal_hints = ("icat", "chafa", "viu", "catimg", "timg", "jp2a")
-    is_terminal = any(h in viewer for h in terminal_hints)
-
-    try:
-        if is_terminal:
-            subprocess.run(cmd)
-        else:
-            # Detach: don't wait, don't tie stdout/stderr to this process
-            subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
-                             start_new_session=True)
-    except FileNotFoundError:
-        prog = cmd[0]
-        print(f"Warning: viewer '{prog}' not found in PATH - skipping open.", file=sys.stderr)
-    except Exception as e:
-        print(f"Warning: could not open viewer: {e}", file=sys.stderr)
-
-
 def _req(url, headers, params=None):
     if params:
         url = url + "?" + urllib.parse.urlencode(params)
     req = urllib.request.Request(url, headers=headers)
     with urllib.request.urlopen(req) as r:
         return json.loads(r.read())
-
-def build_filename_tokens(focal, tweet_id, user_name):
-    """Build the token dict used by --filename-format / filename_format config.
-
-    Tokens:
-      %id     - the id that identifies this archived entry. For a normal
-                tweet this is the tweet's own status id. For a retweet
-                (rt_by_user set) this is the *retweet's own* status id --
-                not the id of the original tweet being retweeted -- so that
-                two different users retweeting the same original tweet
-                don't collide onto the same filename.
-      %user   - focal tweet author's screen_name
-      %rtby   - retweeter's screen_name (only set if this is a "quote-style" RT with rt_by_user)
-      %rtorig - original tweet author's screen_name (only set if this is a retweet)
-      %rt     - literal 'rt' if this is a retweet at all, else ''
-    """
-    resolved_id = tweet_id
-    tokens = {"user": user_name, "rtby": "", "rtorig": "", "rt": ""}
-    if not focal.get("__tombstone") and (focal.get("rt_by_user") or focal.get("is_rt")):
-        tokens["rt"] = "rt"
-        if focal.get("rt_by_user"):
-            tokens["rtby"] = focal["rt_by_user"]["screen_name"]
-            tokens["rtorig"] = focal["user"]["screen_name"]
-            resolved_id = focal.get("rt_id") or tweet_id
-        elif focal.get("rt_orig_sn"):
-            tokens["rtorig"] = focal["rt_orig_sn"]
-    tokens["id"] = str(resolved_id)
-    return tokens
-
-
-def apply_filename_format(fmt, tokens):
-    """Substitute %token placeholders in *fmt*, then clean up any leftover
-    doubled/leading/trailing '-' caused by empty tokens (e.g. non-RT tweets
-    using a format that includes %rtby)."""
-    name = fmt
-    for key, val in tokens.items():
-        name = name.replace(f"%{key}", val or "")
-    name = re.sub(r"-{2,}", "-", name).strip("-_ ")
-    return name or tokens.get("id", "tweet")
-
-
-def resolve_output_path(path, mode):
-    """Apply duplicate_files logic to *path*.
-
-    mode values (from config/default):
-      'overwrite'  - return path unchanged (default, existing file is replaced)
-      'increment'  - if file exists, append -1, -2, ... before the extension
-                     e.g. nasa-123.png -> nasa-123-1.png -> nasa-123-2.png
-      'epoch'      - if file exists, append the current Unix epoch before the extension
-                     e.g. nasa-123.png -> nasa-123-1779464539.png
-    """
-    import time as _time
-    p = Path(path)
-    if mode == "overwrite" or not p.exists():
-        return path
-    stem = p.stem
-    suffix = p.suffix
-    parent = p.parent
-    if mode == "epoch":
-        new_path = parent / f"{stem}-{int(_time.time())}{suffix}"
-    else:  # increment
-        counter = 1
-        while True:
-            new_path = parent / f"{stem}-{counter}{suffix}"
-            if not new_path.exists():
-                break
-            counter += 1
-    return str(new_path)
-
-def resolve_url(url):
-    try:
-        req = urllib.request.Request(url, headers={"User-Agent": UA}, method="HEAD")
-        with urllib.request.urlopen(req) as r:
-            return r.url
-    except Exception:
-        return url
 
 def get_guest_token():
     req = urllib.request.Request(GUEST_TOKEN_URL, method="POST",
@@ -395,6 +263,29 @@ def auth_headers(auth_token, csrf_token):
 def guest_headers(guest_token):
     return {"Authorization": f"Bearer {MASTER_TOKEN or BEARER}", "User-Agent": UA,
             "x-guest-token": guest_token}
+
+def resolve_url(url):
+    try:
+        req = urllib.request.Request(url, headers={"User-Agent": UA}, method="HEAD")
+        with urllib.request.urlopen(req) as r:
+            return r.url
+    except Exception:
+        return url
+
+def resolution_headers(args, headers):
+    """Best-effort headers for resolving nested quoted tweets: reuse whatever
+    headers were already built for the main fetch, otherwise build auth
+    headers from --auth-token/--csrf-token, otherwise fall back to a fresh
+    guest token. In --guest mode auth headers are never used. Returns None
+    if nothing works."""
+    if headers:
+        return headers
+    if not getattr(args, "guest", False) and args.auth_token and args.csrf_token:
+        return auth_headers(args.auth_token, args.csrf_token)
+    try:
+        return guest_headers(get_guest_token())
+    except Exception:
+        return None
 
 def fetch_tweet_detail(tweet_id, headers):
     return _req(TWEET_DETAIL_URL, headers, {
@@ -421,98 +312,6 @@ def fetch_birdwatch_notes(tweet_id, headers):
         "variables": json.dumps({"tweet_id": tweet_id}),
         "features":  json.dumps(BIRDWATCH_FETCH_NOTES_FEAT),
     })
-
-_BW_STATUS_RANK = {"CurrentlyRatedHelpful": 0, "NeedsMoreRatings": 1}  # everything else (e.g. CurrentlyRatedNotHelpful) ranks last
-
-def parse_birdwatch_fetch_notes(data):
-    """Flatten a BirdwatchFetchNotes response into a list of note dicts:
-    {text, entities, rating_status, shown, is_misleading, created_at}.
-
-    'shown' mirrors whether X is currently surfacing the note on the tweet
-    itself (rating_status == CurrentlyRatedHelpful); everything else is a
-    proposed/awaiting-ratings note that only this tool is surfacing.
-
-    Order: the whole misleading_birdwatch_notes group first, then the whole
-    not_misleading_birdwatch_notes group -- the two are never interleaved.
-    Within each group, notes are ranked helpful-first, then awaiting-ratings,
-    then not-helpful, newest first within each tier (the API doesn't expose
-    a per-note vote tally, only the *author's* lifetime stats, so rating
-    tier + recency is the closest available proxy for 'top-voted')."""
-    result = ((data.get("data") or {}).get("tweet_result_by_rest_id") or {}).get("result") or {}
-    if isinstance(result.get("tweet"), dict):  # some responses nest one level deeper
-        result = result["tweet"]
-
-    out = []
-    for group, is_misleading in (("misleading_birdwatch_notes", True),
-                                  ("not_misleading_birdwatch_notes", False)):
-        for n in (result.get(group) or {}).get("notes", []):
-            summary = (n.get("data_v1") or {}).get("summary", {})
-            out.append({
-                "text":          summary.get("text", ""),
-                "entities":      summary.get("entities", []),
-                "rating_status": n.get("rating_status", ""),
-                "shown":         n.get("rating_status") == "CurrentlyRatedHelpful",
-                "is_misleading": is_misleading,
-                "created_at":    n.get("created_at", 0),
-            })
-    out.sort(key=lambda n: (0 if n["is_misleading"] else 1,
-                             _BW_STATUS_RANK.get(n["rating_status"], 2),
-                             -n["created_at"]))
-    return out
-
-def _quote_chain_has_stub(qt):
-    """True if *qt* (a parsed quoted-tweet dict, possibly nested) contains an
-    unresolved stub anywhere down its 'quoted' chain."""
-    while qt:
-        if qt.get("__stub"):
-            return True
-        qt = qt.get("quoted")
-    return False
-
-def resolve_quote_chain(qt, headers, depth=0, max_depth=3, quiet=True):
-    """Resolve a 'quote of a quote' stub (see _parse_tweet_result) by fetching
-    the missing tweet with TweetResultByRestId and parsing it like any other
-    tweet. Recurses up to max_depth levels in case the resolved tweet itself
-    quotes yet another quote. Network/parse failures are swallowed and the
-    stub is left in place so quote_block_html() can fall back to a plain
-    link -- nested-quote context is a nice-to-have, not worth aborting over."""
-    if not qt or depth >= max_depth:
-        return qt
-    if qt.get("__stub"):
-        try:
-            data = fetch_tweet_result(qt["id"], headers)
-            result = data["data"]["tweetResult"]["result"]
-            if result.get("__typename") in ("TweetTombstone", "TweetUnavailable"):
-                reason, tombstone_text = _classify_unavailable(result)
-                return {"__tombstone": True, "screen_name": qt.get("screen_name", ""), "text": tombstone_text,
-                        "permalink": qt.get("permalink", ""), "reason": reason}
-            resolved = _parse_tweet_result(result, _parse_user)
-            if resolved:
-                resolved["quoted"] = resolve_quote_chain(resolved.get("quoted"), headers, depth + 1, max_depth, quiet)
-                return resolved
-        except Exception as e:
-            if not quiet:
-                print(f"Warning: couldn't resolve nested quoted tweet {qt.get('id')}: {e}", file=sys.stderr)
-        return qt  # leave the stub in place; renders as a fallback link
-    if qt.get("__tombstone"):
-        return qt
-    qt["quoted"] = resolve_quote_chain(qt.get("quoted"), headers, depth + 1, max_depth, quiet)
-    return qt
-
-def resolution_headers(args, headers):
-    """Best-effort headers for resolving nested quoted tweets: reuse whatever
-    headers were already built for the main fetch, otherwise build auth
-    headers from --auth-token/--csrf-token, otherwise fall back to a fresh
-    guest token. In --guest mode auth headers are never used. Returns None
-    if nothing works."""
-    if headers:
-        return headers
-    if not getattr(args, "guest", False) and args.auth_token and args.csrf_token:
-        return auth_headers(args.auth_token, args.csrf_token)
-    try:
-        return guest_headers(get_guest_token())
-    except Exception:
-        return None
 
 def fetch_user_id(screen_name, headers):
     ubsn_headers = dict(headers)
@@ -595,6 +394,43 @@ def fetch_nth_tweet_id(user_id, headers, n=1, with_replies=True):
 
     return hits[-1] if hits else None
 
+def _quote_chain_has_stub(qt):
+    while qt:
+        if qt.get("__stub"):
+            return True
+        qt = qt.get("quoted")
+    return False
+
+def resolve_quote_chain(qt, headers, depth=0, max_depth=3, quiet=True):
+    """Resolve a 'quote of a quote' stub (see _parse_tweet_result) by fetching
+    the missing tweet with TweetResultByRestId and parsing it like any other
+    tweet. Recurses up to max_depth levels in case the resolved tweet itself
+    quotes yet another quote. Network/parse failures are swallowed and the
+    stub is left in place so quote_block_html() can fall back to a plain
+    link -- nested-quote context is a nice-to-have, not worth aborting over."""
+    if not qt or depth >= max_depth:
+        return qt
+    if qt.get("__stub"):
+        try:
+            data = fetch_tweet_result(qt["id"], headers)
+            result = data["data"]["tweetResult"]["result"]
+            if result.get("__typename") in ("TweetTombstone", "TweetUnavailable"):
+                reason, tombstone_text = _classify_unavailable(result)
+                return {"__tombstone": True, "screen_name": qt.get("screen_name", ""), "text": tombstone_text,
+                        "permalink": qt.get("permalink", ""), "reason": reason}
+            resolved = _parse_tweet_result(result, _parse_user)
+            if resolved:
+                resolved["quoted"] = resolve_quote_chain(resolved.get("quoted"), headers, depth + 1, max_depth, quiet)
+                return resolved
+        except Exception as e:
+            if not quiet:
+                print(f"Warning: couldn't resolve nested quoted tweet {qt.get('id')}: {e}", file=sys.stderr)
+        return qt  # leave the stub in place; renders as a fallback link
+    if qt.get("__tombstone"):
+        return qt
+    qt["quoted"] = resolve_quote_chain(qt.get("quoted"), headers, depth + 1, max_depth, quiet)
+    return qt
+
 def _parse_user(ur):
     res = ur.get("result", {})
     if not res: return {"name": "Unknown", "screen_name": "unknown", "avatar_url": "",
@@ -674,7 +510,6 @@ def _extract_media_attribution(ext_entities, result=None, rt_result=None):
                     if "entities" in l and isinstance(l["entities"], dict):
                         dicts_to_check.append(l["entities"])
 
-    # Path 1: additional_media_info.source_user on any found media item
     for d in dicts_to_check:
         for m in d.get("media", []):
             if isinstance(m, dict):
@@ -684,7 +519,6 @@ def _extract_media_attribution(ext_entities, result=None, rt_result=None):
                 if u:
                     return u
 
-    # Path 2: card binding_values amplify_card_user_results (TweetDetail)
     for r in [result, rt_result]:
         if isinstance(r, dict):
             tw = r.get("tweet") if "tweet" in r else r
@@ -708,9 +542,6 @@ def _extract_media_attribution(ext_entities, result=None, rt_result=None):
     return None
 
 def _permalink_screen_name(leg):
-    """Extract the screen_name embedded in a quoted_status_permalink's
-    expanded URL -- often the only place it appears when the quoted tweet
-    couldn't be hydrated normally (blocked/suspended/deleted author)."""
     expanded = leg.get("quoted_status_permalink", {}).get("expanded", "")
     m = re.search(r"(?:twitter|x)\.com/([^/]+)/status", expanded)
     return (m.group(1) if m else ""), expanded
@@ -718,12 +549,6 @@ def _permalink_screen_name(leg):
 _PROTECTED_MSG = "You\u2019re unable to view this Tweet because this account owner limits who can view their Tweets."
 
 def _classify_unavailable(res):
-    """Given a TweetTombstone or TweetUnavailable result object, return
-    (reason, text). reason is a short lowercase word/token ("suspended",
-    "deleted", "removed", "no_account", "protected", "unavailable") suitable
-    for use in "This Tweet [is/was] ... {reason}.", text is a fallback
-    human-readable message for when we don't have a screen_name to build
-    that sentence."""
     typename = res.get("__typename")
     if typename == "TweetUnavailable":
         reason = (res.get("reason") or "unavailable").lower()
@@ -755,37 +580,6 @@ def _classify_unavailable(res):
         return reason, text
     return "unavailable", "This tweet is unavailable."
 
-
-def _tombstone_label_html(sn, reason, text, tid=None, permalink=""):
-    """Build the inner HTML label for a tombstone card. Handles the
-    "no_account" reason specially: X renders that as "This account
-    @handle no longer exists." with the "This account ... no longer
-    exists." wrapper linking to the generic /i/status/ permalink and the
-    @handle linking to the (now-gone) user separately."""
-    if not tid:
-        m = re.search(r"/status/(\d+)", permalink or "")
-        tid = m.group(1) if m else None
-    generic_link = _tweet_permalink("i", tid) if tid else _nitter_link(permalink)
-    user_link    = _tweet_permalink(sn, tid) if (sn and tid) else _nitter_link(permalink)
-    
-    if reason == "no_account" and sn:
-        pre  = (f'<a href="{generic_link}" style="color:inherit;text-decoration:none;">This account </a>'
-                if generic_link else "This account ")
-        mid  = (f'@<a href="{user_link}" style="color:inherit;text-decoration:none;">{sn}</a>'
-                if user_link else f"@{sn}")
-        post = (f'<a href="{generic_link}" style="color:inherit;text-decoration:none;"> no longer exists.</a>'
-                if generic_link else " no longer exists.")
-        return pre + mid + post
-
-    if reason == "protected":
-        label = text or _PROTECTED_MSG
-        return f'<a href="{generic_link}" style="color:inherit;text-decoration:none;">{label}</a>' if generic_link else label
-
-    verb = "was" if reason in ("deleted", "removed") else "is"
-    
-    label = f"This Tweet from @{sn} {verb} {reason}." if sn else (text or f"This Tweet {verb} {reason}.")
-    return f'<a href="{generic_link}" style="color:inherit;text-decoration:none;">{label}</a>' if generic_link else label
-
 def _parse_tweet_result(result, user_parser):
     if not result or result.get("__typename") in ("TweetTombstone", "TweetUnavailable"):
         return None
@@ -806,29 +600,14 @@ def _parse_tweet_result(result, user_parser):
         else:
             quoted = _parse_tweet_result(qt_res, user_parser)
             if quoted and quoted.get("user", {}).get("screen_name") == "unknown":
-                # The tweet itself hydrated, but the author's user data didn't.
-                # X gives us the tweet id/permalink but no user_results, and
-                # doesn't tell us why (blocked, protected, suspended, etc all
-                # look the same here) -- so _parse_user's empty-result
-                # fallback kicked in. Show a plain unavailable link instead
-                # of guessing at a reason, or showing "Unknown".
                 sn, expanded = _permalink_screen_name(leg)
                 quoted = {"__tombstone": True, "screen_name": sn, "text": "This tweet is unavailable.",
                           "permalink": expanded, "reason": "unavailable"}
     elif leg.get("quoted_status_id_str") and result.get("quoted_status_result") == {}:
-        # Empty result object with no error info at all -- could be blocked,
-        # deleted, suspended, or protected; X gives us nothing to tell them
-        # apart, so we don't guess.
         sn, expanded = _permalink_screen_name(leg)
         quoted = {"__tombstone": True, "screen_name": sn, "text": "This tweet is unavailable.", "permalink": expanded,
                   "reason": "unavailable"}
     elif leg.get("quoted_status_id_str"):
-        # A "quote of a quote": X's API only hydrates one level of
-        # quoted_status_result, so a tweet that quotes an already-quoting
-        # tweet shows up here with just a stub ("quotedRefResult" containing
-        # only a rest_id, or no result at all) instead of full tweet data.
-        # Keep a lightweight stub; resolve_quote_chain() can fetch the full
-        # tweet separately (this is the "quoted quote" nitter/X also miss).
         permalink = leg.get("quoted_status_permalink", {})
         expanded = permalink.get("expanded", "")
         m_sn = re.search(r"(?:twitter|x)\.com/([^/]+)/status", expanded)
@@ -916,7 +695,6 @@ def _parse_tweet_result(result, user_parser):
             total_votes = sum(c["count"] for c in choices)
             for c in choices:
                 c["pct"] = (c["count"] / total_votes * 100) if total_votes else 0
-            # counts_are_final comes through as a real boolean_value, not a string
             cf_raw = bv.get("counts_are_final", {})
             counts_are_final = cf_raw.get("boolean_value")
             if counts_are_final is None:
@@ -1174,6 +952,44 @@ def parse_tweet_result_single(data):
         return [{"__tombstone": True, "id": result.get("rest_id"), "text": msg, "screen_name": "", "reason": reason}]
     return [_parse_tweet_result(result, _parse_user)]
 
+_BW_STATUS_RANK = {"CurrentlyRatedHelpful": 0, "NeedsMoreRatings": 1}  # everything else (e.g. CurrentlyRatedNotHelpful) ranks last
+
+def parse_birdwatch_fetch_notes(data):
+    """Flatten a BirdwatchFetchNotes response into a list of note dicts:
+    {text, entities, rating_status, shown, is_misleading, created_at}.
+
+    'shown' mirrors whether X is currently surfacing the note on the tweet
+    itself (rating_status == CurrentlyRatedHelpful); everything else is a
+    proposed/awaiting-ratings note that only this tool is surfacing.
+
+    Order: the whole misleading_birdwatch_notes group first, then the whole
+    not_misleading_birdwatch_notes group -- the two are never interleaved.
+    Within each group, notes are ranked helpful-first, then awaiting-ratings,
+    then not-helpful, newest first within each tier (the API doesn't expose
+    a per-note vote tally, only the *author's* lifetime stats, so rating
+    tier + recency is the closest available proxy for 'top-voted')."""
+    result = ((data.get("data") or {}).get("tweet_result_by_rest_id") or {}).get("result") or {}
+    if isinstance(result.get("tweet"), dict):  # some responses nest one level deeper
+        result = result["tweet"]
+
+    out = []
+    for group, is_misleading in (("misleading_birdwatch_notes", True),
+                                  ("not_misleading_birdwatch_notes", False)):
+        for n in (result.get(group) or {}).get("notes", []):
+            summary = (n.get("data_v1") or {}).get("summary", {})
+            out.append({
+                "text":          summary.get("text", ""),
+                "entities":      summary.get("entities", []),
+                "rating_status": n.get("rating_status", ""),
+                "shown":         n.get("rating_status") == "CurrentlyRatedHelpful",
+                "is_misleading": is_misleading,
+                "created_at":    n.get("created_at", 0),
+            })
+    out.sort(key=lambda n: (0 if n["is_misleading"] else 1,
+                             _BW_STATUS_RANK.get(n["rating_status"], 2),
+                             -n["created_at"]))
+    return out
+
 _FULL_STATS = False   # set to True by --full-stats / config full_stats=true
 _BIRD_ICON  = False   # set to True by --bird-icon / config bird_icon=true
 
@@ -1199,15 +1015,6 @@ def abs_time(created_at):
     if not created_at: return ""
     dt = datetime.strptime(created_at, "%a %b %d %H:%M:%S +0000 %Y")
     return dt.strftime("%b %d, %Y · %I:%M %p UTC").replace(" 0", " ")
-
-def _linked_abs_time(t):
-    """Render the focal tweet's absolute timestamp as a permalink, same as
-    a real Nitter/X page would, without altering its existing text color."""
-    label = abs_time(t.get("created_at"))
-    link = _tweet_permalink(t.get("user", {}).get("screen_name"), t.get("id"))
-    if link:
-        return f'<a href="{link}" style="color:inherit;text-decoration:none;">{label}</a>'
-    return label
 
 def format_tweet_line(tweet, nsfw=False, birdwatch=False):
     """Return a single summary line for a parsed tweet dict.
@@ -1324,31 +1131,47 @@ def format_tweet_line(tweet, nsfw=False, birdwatch=False):
 
     return f"{header}{body} {footer}"
 
+# ---- link-building helpers: turn a screen_name/tweet_id into an <a href> under the configured nitter_url base (_TWEET_BASE_URL, above) ----
 
-def upload_imgur(path):
-    import uuid
-    client_id = os.environ.get("IMGUR_CLIENT_ID", "17385cf5260cef9")
-    with open(path, "rb") as f:
-        img_data = f.read()
-    boundary = uuid.uuid4().hex
-    body = (
-        f"--{boundary}\r\n"
-        f'Content-Disposition: form-data; name="image"; filename="{os.path.basename(path)}"\r\n'
-        f"Content-Type: image/png\r\n\r\n"
-    ).encode() + img_data + f"\r\n--{boundary}--\r\n".encode()
-    req = urllib.request.Request(
-        "https://api.imgur.com/3/image",
-        data=body,
-        headers={
-            "Authorization": f"Client-ID {client_id}",
-            "Content-Type": f"multipart/form-data; boundary={boundary}",
-        },
-    )
-    with urllib.request.urlopen(req) as r:
-        resp = json.loads(r.read())
-    url = resp["data"]["link"].replace("http://", "https://")
-    delete_hash = resp["data"]["deletehash"]
-    return url, delete_hash
+def _nitter_link(url):
+    """Rewrite a twitter.com/x.com tweet permalink to use the configured
+    nitter_url base (see _TWEET_BASE_URL / tw2img.conf), preserving the
+    rest of the URL (path, query string, etc). Falls back to the original
+    URL if it doesn't look like a twitter.com/x.com link, or if nitter_url
+    has been explicitly disabled (set to an empty string in the config)."""
+    if not url or not _TWEET_BASE_URL:
+        return url
+    return re.sub(r"^https?://(?:www\.)?(?:twitter|x)\.com", _TWEET_BASE_URL, url)
+
+def _tweet_permalink(screen_name, tweet_id):
+    if not _TWEET_BASE_URL or not screen_name or not tweet_id:
+        return ""
+    return f"{_TWEET_BASE_URL}/{screen_name}/status/{tweet_id}"
+
+def _profile_link(screen_name):
+    if not _TWEET_BASE_URL or not screen_name:
+        return ""
+    return f"{_TWEET_BASE_URL}/{screen_name}"
+
+def _retweets_link(screen_name, tweet_id):
+    if not _TWEET_BASE_URL or not screen_name or not tweet_id:
+        return ""
+    return f"{_TWEET_BASE_URL}/{screen_name}/status/{tweet_id}/retweets"
+
+def _quotes_link(tweet_id):
+    if not _TWEET_BASE_URL or not tweet_id:
+        return ""
+    return f"{_TWEET_BASE_URL}/search?q=-filter:retweets+quoted_tweet_id:{tweet_id}"
+
+def _linked(label, link):
+    if not link:
+        return label
+    return f'<a href="{link}" style="color:inherit;text-decoration:none;">{label}</a>'
+
+def _linked_abs_time(t):
+    label = abs_time(t.get("created_at"))
+    link = _tweet_permalink(t.get("user", {}).get("screen_name"), t.get("id"))
+    return _linked(label, link)
 
 def linkify(text, entities):
     for u in entities.get("urls", []):
@@ -1378,6 +1201,31 @@ def strip_all_lead_mentions(text, entities):
 
     return text[current_pos:].lstrip(), reply_to_list
 
+def _tombstone_label_html(sn, reason, text, tid=None, permalink=""):
+    if not tid:
+        m = re.search(r"/status/(\d+)", permalink or "")
+        tid = m.group(1) if m else None
+    generic_link = _tweet_permalink("i", tid) if tid else _nitter_link(permalink)
+    user_link    = _tweet_permalink(sn, tid) if (sn and tid) else _nitter_link(permalink)
+    
+    if reason == "no_account" and sn:
+        pre  = (f'<a href="{generic_link}" style="color:inherit;text-decoration:none;">This account </a>'
+                if generic_link else "This account ")
+        mid  = (f'@<a href="{user_link}" style="color:inherit;text-decoration:none;">{sn}</a>'
+                if user_link else f"@{sn}")
+        post = (f'<a href="{generic_link}" style="color:inherit;text-decoration:none;"> no longer exists.</a>'
+                if generic_link else " no longer exists.")
+        return pre + mid + post
+
+    if reason == "protected":
+        label = text or _PROTECTED_MSG
+        return f'<a href="{generic_link}" style="color:inherit;text-decoration:none;">{label}</a>' if generic_link else label
+
+    verb = "was" if reason in ("deleted", "removed") else "is"
+    
+    label = f"This Tweet from @{sn} {verb} {reason}." if sn else (text or f"This Tweet {verb} {reason}.")
+    return f'<a href="{generic_link}" style="color:inherit;text-decoration:none;">{label}</a>' if generic_link else label
+
 def _fmt_duration(ms):
     if not ms:
         return ""
@@ -1387,6 +1235,23 @@ def _fmt_duration(ms):
     if h:
         return f"{h}:{m:02d}:{s:02d}"
     return f"{m}:{s:02d}"
+
+def _orig_img_url(url):
+    """Return the full/original-resolution version of a pbs.twimg.com media URL."""
+    if not url:
+        return url
+    sep = "&" if "?" in url else "?"
+    return f"{url}{sep}name=orig"
+
+def _best_video_url(video_info):
+    """Pick the highest-bitrate video/mp4 variant URL from a video_info dict.
+    Falls back to any variant with a url if no mp4 is found."""
+    variants = (video_info or {}).get("variants", [])
+    mp4s = [v for v in variants if v.get("content_type") == "video/mp4" and v.get("url")]
+    if mp4s:
+        return max(mp4s, key=lambda v: v.get("bitrate", 0))["url"]
+    any_urls = [v for v in variants if v.get("url")]
+    return any_urls[0]["url"] if any_urls else None
 
 PLAY_SVG = (
     '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 65 65" ' 
@@ -1402,14 +1267,20 @@ def _attribution_html(attr):
     if not attr: return ""
     vicon = verified_svg(attr.get("verified_type"), attr.get("is_blue_verified", False))
     avatar = attr["avatar_url"]
+    sn = attr.get("screen_name", "")
+    user_link = f"{_TWEET_BASE_URL}/{sn}" if sn else ""
+    open_a  = f'<a href="{user_link}" style="display:inline-flex;align-items:center;gap:4px;color:inherit;text-decoration:none;">' if user_link else '<span style="display:inline-flex;align-items:center;gap:4px;">'
+    close_a = "</a>" if user_link else "</span>"
     return (
         f'<div class="media-attribution" style="display: flex; align-items: center; margin-top: 2px; margin-bottom: 8px; font-size:calc(13px * var(--fs)); color: var(--grey); gap: 4px; font-family: -apple-system, BlinkMacSystemFont, sans-serif;">'
         f'<span>From </span>'
+        f'{open_a}'
         f'<img class="attr-avatar" src="{avatar}" style="width: 16px; height: 16px; border-radius: 50%; object-fit: cover; display: inline-block; vertical-align: middle;">'
         f'<span style="display:inline-flex;align-items:center;margin-top:2px;">'
         f'<strong class="attr-name" style="color: var(--fg); font-weight: 700;">{attr["name"]}</strong>'
         f'{vicon.replace("margin:0 0 2px 4px", "margin:2px 0 0 4px")}'
         f'</span>'
+        f'{close_a}'
         f'</div>'
     )
 
@@ -1429,6 +1300,7 @@ def _ar_cols(aspects):
     return " ".join(f"{a/total:.4f}fr" for a in aspects)
 
 def media_html(ext_entities, is_ai=False):
+    import html as _html
     media_list = ext_entities.get("media", [])
     if not media_list:
         return ""
@@ -1438,7 +1310,11 @@ def media_html(ext_entities, is_ai=False):
     for m in media_list:
         aspects.append(_aspect(m))
         if m["type"] == "photo":
-            parts.append(f'<div class="attachment"><img src="{m["media_url_https"]}"></div>')
+            full_url = _orig_img_url(m["media_url_https"])
+            parts.append(
+                f'<div class="attachment"><a class="media-link" href="{full_url}" target="_blank" rel="noopener">'
+                f'<img src="{m["media_url_https"]}"></a></div>'
+            )
         elif m["type"] in ("video", "animated_gif"):
             vi = m.get("video_info", {})
             dur_ms = vi.get("duration_millis", 0)
@@ -1446,8 +1322,10 @@ def media_html(ext_entities, is_ai=False):
             dur_html = (
                 f'<div class="vid-duration">{dur_label}</div>' if dur_label else ""
             )
+            vid_url = _best_video_url(vi)
+            src_attr = f' data-video-src="{_html.escape(vid_url, quote=True)}"' if vid_url else ""
             parts.append(
-                f'<div class="attachment video-wrap">'
+                f'<div class="attachment video-wrap"{src_attr}>'
                 f'<img src="{m["media_url_https"]}">'
                 f'<div class="play-overlay">{PLAY_SVG}</div>'
                 f'{dur_html}'
@@ -1515,6 +1393,7 @@ def media_html(ext_entities, is_ai=False):
 
     return grid + ai_label
 
+# ---- icons and small badges (verified checkmark, parody label, etc) ----
 
 GLYPHS = {
     "comment": ("M1000 350q0-97-67-179t-182-130-251-48q-39 0-81 4-110-97-257-135-27-8-63-12-10-1-17 5t-10 16v1q-2 2 0 6t1 6 2 5l4 5t4 5 4 5q4 5 17 19t20 22 17 22 18 28 15 33 15 42q-88 50-138 123t-51 157q0 73 40 139t109 115 163 76 197 28q135 0 251-48t182-130 67-179z", 1000),
@@ -1680,7 +1559,9 @@ SHARED_CSS = """
 .media-grid-5 .row-top { display: grid; gap: 3px; }
 .media-grid-5 .row-bottom { display: grid; gap: 3px; }
 .attachment img { width: 100%; display: block; }
-.video-wrap { position: relative; max-height: 510px; overflow: hidden; display: flex; justify-content: center; background: #000; }
+.media-link { display: block; width: 100%; height: 100%; cursor: pointer; }
+.video-wrap { position: relative; max-height: 510px; overflow: hidden; display: flex; justify-content: center; background: #000; cursor: pointer; }
+.video-wrap video { width: auto; height: auto; max-width: 100%; max-height: 510px; object-fit: contain; display: block; }
 .video-wrap img { width: auto; height: auto; max-width: 100%; max-height: 510px; object-fit: contain; display: block; }
 .play-overlay { position: absolute; top: 0; left: 0; right: 0; bottom: 0; display: flex; align-items: center; justify-content: center; pointer-events: none; }
 .vid-duration { position: absolute; bottom: 6px; left: 8px; background: rgba(0,0,0,0.6); color: #fff; font-size:calc(12px * var(--fs)); font-weight: 600; line-height: 1; padding: 3px 5px; border-radius: 4px; pointer-events: none; }
@@ -1700,6 +1581,7 @@ SHARED_CSS = """
 .quote-media > img { width: 100%; display: block; }
 .quote-media .video-wrap { max-height: 400px; background: #000; }
 .quote-media .video-wrap img { width: auto; height: auto; max-width: 100%; max-height: 400px; object-fit: contain; }
+.quote-media .video-wrap video { width: auto; height: auto; max-width: 100%; max-height: 400px; object-fit: contain; }
 .quote-media .media-row { margin: 0; border-radius: 0; }
 .quote-media .media-grid-2x2 { margin: 0; border-radius: 0; }
 .quote-media .media-grid-3 { margin: 0; border-radius: 0; }
@@ -1757,6 +1639,8 @@ SHARED_CSS = """
 .top-reply-divider { height: 1px; background: var(--border); margin: 0 14px; }
 .tweet-row.top-reply { padding-top: 10px; }
 """
+
+# ---- translation ('Translated from ...' banner + Google Translate calls) ----
 
 _LANG_NAMES = {
     "af": "Afrikaans", "sq": "Albanian", "am": "Amharic", "ar": "Arabic",
@@ -1859,15 +1743,6 @@ def _trans_label_html(lang_name):
     )
 
 def _birdwatch_note_html(text, entities, shown=True, is_misleading=True):
-    """Render a single Community Note box from raw note text + entities.
-    Shared by the tweet's official birdwatch_pivot note and by notes fetched
-    via --with-note/--with-notes (BirdwatchFetchNotes). Notes that aren't
-    currently shown on Twitter (rating_status != CurrentlyRatedHelpful) are
-    labelled 'Proposed' and rendered with a dashed border so they're not
-    mistaken for X's own verdict; among proposed notes, ones from the
-    not_misleading_birdwatch_notes group get an extra '- Not Misleading'
-    suffix so they're not confused with notes proposing the tweet IS
-    misleading."""
     ents = [e for e in entities if e.get("fromIndex") is not None and e.get("toIndex") is not None]
     ents.sort(key=lambda e: e["fromIndex"], reverse=True)
     for e in ents:
@@ -1879,9 +1754,6 @@ def _birdwatch_note_html(text, entities, shown=True, is_misleading=True):
             text = text[:start] + text[end:]
             continue
         if href:
-            # ref.url is always a t.co shortlink; the text slice at
-            # [fromIndex:toIndex] is already the expanded destination URL,
-            # so use it as both the visible text and the href.
             text = text[:start] + f'<a href="{display}">{display}</a>' + text[end:]
     # Birdwatch entity lists only carry TimelineUrl entries; bare @mentions
     # and #hashtags in note text are untracked, so linkify them here using
@@ -1902,14 +1774,6 @@ def _birdwatch_note_html(text, entities, shown=True, is_misleading=True):
         </div>'''
 
 def _birdwatch_html(t):
-    """Return Community Note box(es) for a parsed tweet dict, or empty string.
-    Shared by the focal/parent tweet path and quote_block_html, since a
-    quoted tweet can carry its own birdwatch note independent of the
-    tweet quoting it. Renders the tweet's official (currently-shown) note
-    first, followed by any extra notes attached via --with-note/--with-notes:
-    misleading-group notes first (already ranked top-first by
-    parse_birdwatch_fetch_notes), then not-misleading-group notes, each
-    flagged 'Proposed' unless independently CurrentlyRatedHelpful."""
     parts = []
     if t.get("birdwatch"):
         parts.append(_birdwatch_note_html(t["birdwatch"], t.get("birdwatch_ents", []), shown=True))
@@ -1948,26 +1812,36 @@ def quote_block_html(qt, depth=0):
     time_link = _tweet_permalink(u.get("screen_name"), qt.get("id"))
     if time_link:
         time = f'<a href="{time_link}" style="color:inherit;text-decoration:none;">{time}</a>'
+    qt_profile_link = _profile_link(u.get("screen_name"))
+    qt_name_html = _linked(u["name"], qt_profile_link)
+    qt_sn_html   = _linked(f'@{u["screen_name"]}', qt_profile_link)
     media = ""
     mlist = qt["ext_entities"].get("media", [])
     if mlist:
         if len(mlist) == 1:
             m = mlist[0]
             if m["type"] in ("video", "animated_gif"):
+                import html as _html
                 vi = m.get("video_info", {})
                 dur_ms = vi.get("duration_millis", 0)
                 dur_label = _fmt_duration(dur_ms) if m["type"] == "video" else ""
                 dur_html = f'<div class="vid-duration">{dur_label}</div>' if dur_label else ""
+                vid_url = _best_video_url(vi)
+                src_attr = f' data-video-src="{_html.escape(vid_url, quote=True)}"' if vid_url else ""
                 media = (
                     f'<div class="quote-media">'
-                    f'<div class="video-wrap">'
+                    f'<div class="video-wrap"{src_attr}>'
                     f'<img src="{m["media_url_https"]}">'
                     f'<div class="play-overlay">{PLAY_SVG}</div>'
                     f'{dur_html}'
                     f'</div></div>'
                 )
             else:
-                media = f'<div class="quote-media"><img src="{m["media_url_https"]}"></div>'
+                full_url = _orig_img_url(m["media_url_https"])
+                media = (
+                    f'<div class="quote-media"><a class="media-link" href="{full_url}" target="_blank" rel="noopener">'
+                    f'<img src="{m["media_url_https"]}"></a></div>'
+                )
         else:
             media = f'<div class="quote-media">{media_html(qt["ext_entities"])}</div>'
     has_media_cls = " has-media" if media else ""
@@ -1986,8 +1860,8 @@ def quote_block_html(qt, depth=0):
     return f"""<div class="quote-block{has_media_cls}">
   <div class="quote-header">
     <img class="quote-avatar" src="{u["avatar_url"]}">
-    <span class="quote-name">{u["name"]}</span>{vicon}
-    <span class="quote-sn">@{u["screen_name"]}</span>
+    <span class="quote-name">{qt_name_html}</span>{vicon}
+    <span class="quote-sn">{qt_sn_html}</span>
     <span class="quote-time">{time}</span>
   </div>
   {_trans_label_html(qt.get("translated_from"))}
@@ -2014,8 +1888,6 @@ GROK_SVG = (
 )
 
 def _linkify_md(text):
-    """Replace markdown [label](url) / [](url) with <a> tags in already-escaped text.
-    The input *text* must NOT yet be html-escaped; escaping is done here per segment."""
     import html as _html
     parts = re.split(r'(\[[^\]]*\]\([^)]+\))', text)
     out = []
@@ -2052,8 +1924,6 @@ def _md_to_html(text):
     """Convert Markdown subset (bold, headers, bullets, [label](url) links) to HTML.
     Trailing lines that consist solely of a markdown link are collected into a
     Sources section rendered as plain <a> blocks, one per line."""
-    # Pre-process: any [label](url) token gets its own line, handles Grok appending
-    # sources inline without newlines: "...actions.[](https://axios.com/...)[](https://...)"
     text = re.sub(r'(\[[^\]]*\]\([^)]+\))', r'\n\1\n', text)
     text = re.sub(r'\n{3,}', '\n\n', text).strip()
     lines = text.split("\n")
@@ -2130,6 +2000,8 @@ def grok_card_html(question, answer):
     </div>
   </div>
 </div>'''
+
+# ---- link-preview cards and polls ----
 
 def card_html(card):
     if not card: return ""
@@ -2266,6 +2138,7 @@ def poll_html(poll):
     </div>
   </div>'''
 
+# ---- full tweet row assembly (combines everything above into one tweet) ----
 
 def tweet_row_html(t, is_parent=False, no_source=False, is_reply=False):
     if t.get("__tombstone"):
@@ -2297,6 +2170,9 @@ def tweet_row_html(t, is_parent=False, no_source=False, is_reply=False):
     rel_str     = rel_time(t["created_at"])
     row_class   = "tweet-row" + (" top-reply" if is_reply else ("" if is_parent else " focal"))
     time_link   = _tweet_permalink(u.get("screen_name"), t.get("id"))
+    profile_link = _profile_link(u.get("screen_name"))
+    fullname_html = _linked(u["name"], profile_link)
+    username_html = _linked(f'@{u["screen_name"]}', profile_link)
     rel_str_linked = (f'<a href="{time_link}" style="color:inherit;text-decoration:none;">{rel_str}</a>'
                        if time_link else rel_str)
 
@@ -2314,10 +2190,12 @@ def tweet_row_html(t, is_parent=False, no_source=False, is_reply=False):
     rt_by = t.get("rt_by_user")
     rt_header = ""
     if rt_by:
+        rt_by_link = _profile_link(rt_by.get("screen_name"))
+        rt_by_label = f'{rt_by["name"]} retweeted'
         rt_header = (
             f'<div class="rt-header">'
             f'{icon_svg("retweet", 13, "var(--grey)")}'
-            f'{rt_by["name"]} retweeted'
+            f'{_linked(rt_by_label, rt_by_link)}'
             f'</div>'
         )
 
@@ -2354,10 +2232,13 @@ def tweet_row_html(t, is_parent=False, no_source=False, is_reply=False):
         '''
     src = "" if no_source else f'<span class="source">{t["source"]}</span>'
     bw_icon = f'<span class="stat">{icon_svg("group", 13, grey)}</span>' if t.get("has_birdwatch_notes") else ""
+    replies_link  = time_link
+    retweets_link = _retweets_link(u.get("screen_name"), t.get("id"))
+    quotes_link   = _quotes_link(t.get("id"))
     stats = f"""<div class="stats">
-      <span class="stat">{icon_svg("comment", 13, grey)} {fmt(t["reply_count"])}</span>
-      <span class="stat">{icon_svg("retweet", 13, grey)} {fmt(t["retweet_count"])}</span>
-      <span class="stat">{icon_svg("quote",   13, grey)} {fmt(t["quote_count"])}</span>
+      <span class="stat">{_linked(f'{icon_svg("comment", 13, grey)} {fmt(t["reply_count"])}', replies_link)}</span>
+      <span class="stat">{_linked(f'{icon_svg("retweet", 13, grey)} {fmt(t["retweet_count"])}', retweets_link)}</span>
+      <span class="stat">{_linked(f'{icon_svg("quote",   13, grey)} {fmt(t["quote_count"])}', quotes_link)}</span>
       <span class="stat">{icon_svg("heart",   13, grey)} {fmt(t["like_count"])}</span>
       <span class="stat">{icon_svg("views",   13, grey)} {fmt(t["view_count"])}</span>
       {bw_icon}
@@ -2373,7 +2254,7 @@ def tweet_row_html(t, is_parent=False, no_source=False, is_reply=False):
   <div class="right-col">
     <div class="tweet-header">
       <div class="tweet-header-left">
-        <div style="display:flex;align-items:center;"><span class="fullname">{u["name"]}</span>{vicon}<span class="username">@{u["screen_name"]}</span>{inline_time}</div>{plabel}
+        <div style="display:flex;align-items:center;"><span class="fullname">{fullname_html}</span>{vicon}<span class="username">{username_html}</span>{inline_time}</div>{plabel}
       </div>
       {corner_html}
     </div>
@@ -2395,8 +2276,8 @@ def tweet_row_html(t, is_parent=False, no_source=False, is_reply=False):
    {rt_header}<div class="focal-header{" has-rt" if rt_by else ""}">
     <img class="avatar" src="{u["avatar_url"]}">
     <div class="focal-header-names">
-      <div class="focal-header-top"><span class="fullname">{u["name"]}</span>{vicon}</div>
-      <div class="focal-header-bottom"><span class="username">@{u["screen_name"]}</span>{plabel}</div>
+      <div class="focal-header-top"><span class="fullname">{fullname_html}</span>{vicon}</div>
+      <div class="focal-header-bottom"><span class="username">{username_html}</span>{plabel}</div>
     </div>
     <span style="margin-left:auto;align-self:flex-start;margin-top:2px;display:inline-flex;align-items:center;">{corner_html}</span>
   </div>
@@ -2415,6 +2296,8 @@ def tweet_row_html(t, is_parent=False, no_source=False, is_reply=False):
     {stats}
   </div>
 </div>"""
+
+# ---- CSS variable parsing / nitter-theme override support ----
 
 def _parse_css_vars(css_text):
     m = re.search(r'body\s*\{([^}]*)\}', css_text, re.DOTALL)
@@ -2462,6 +2345,8 @@ def _apply_nitter_theme(css_text):
     if not lines:
         return ""
     return "body {\n" + "\n".join(lines) + "\n    background: var(--bg);\n    color: var(--fg);\n}\na { color: var(--link); text-decoration: none; }\n"
+
+# ---- full HTML page assembly (wraps one or more tweet rows in <html>) ----
 
 def build_html(tweets, light=False, no_source=False, css_path=None, width=598, nitter=False, for_browser=False, top_reply=None, font_scale=1.0):  # top_reply: list
     theme_css = LIGHT_CSS if light else DARK_CSS
@@ -2514,12 +2399,116 @@ html, body {{
     return f"""<!DOCTYPE html>
 <html><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="referrer" content="no-referrer">
 <style>
 {base_css}
 {extra_style}
 </style></head><body>
 <div class="thread">{"".join(rows)}</div>
+<script>
+document.addEventListener("click", function(e) {{
+  var wrap = e.target.closest(".video-wrap[data-video-src]");
+  if (!wrap) return;
+  var src = wrap.getAttribute("data-video-src");
+  var video = document.createElement("video");
+  video.src = src;
+  video.controls = true;
+  video.autoplay = true;
+  video.playsInline = true;
+  wrap.innerHTML = "";
+  wrap.removeAttribute("data-video-src");
+  wrap.appendChild(video);
+}});
+</script>
 </body></html>"""
+
+def build_filename_tokens(focal, tweet_id, user_name):
+    """Build the token dict used by --filename-format / filename_format config.
+
+    Tokens:
+      %id     - the id that identifies this archived entry. For a normal
+                tweet this is the tweet's own status id. For a retweet
+                (rt_by_user set) this is the *retweet's own* status id --
+                not the id of the original tweet being retweeted -- so that
+                two different users retweeting the same original tweet
+                don't collide onto the same filename.
+      %user   - focal tweet author's screen_name
+      %rtby   - retweeter's screen_name (only set if this is a "quote-style" RT with rt_by_user)
+      %rtorig - original tweet author's screen_name (only set if this is a retweet)
+      %rt     - literal 'rt' if this is a retweet at all, else ''
+    """
+    resolved_id = tweet_id
+    tokens = {"user": user_name, "rtby": "", "rtorig": "", "rt": ""}
+    if not focal.get("__tombstone") and (focal.get("rt_by_user") or focal.get("is_rt")):
+        tokens["rt"] = "rt"
+        if focal.get("rt_by_user"):
+            tokens["rtby"] = focal["rt_by_user"]["screen_name"]
+            tokens["rtorig"] = focal["user"]["screen_name"]
+            resolved_id = focal.get("rt_id") or tweet_id
+        elif focal.get("rt_orig_sn"):
+            tokens["rtorig"] = focal["rt_orig_sn"]
+    tokens["id"] = str(resolved_id)
+    return tokens
+
+
+def apply_filename_format(fmt, tokens):
+    """Substitute %token placeholders in *fmt*, then clean up any leftover
+    doubled/leading/trailing '-' caused by empty tokens (e.g. non-RT tweets
+    using a format that includes %rtby)."""
+    name = fmt
+    for key, val in tokens.items():
+        name = name.replace(f"%{key}", val or "")
+    name = re.sub(r"-{2,}", "-", name).strip("-_ ")
+    return name or tokens.get("id", "tweet")
+
+
+def resolve_output_path(path, mode):
+    """Apply duplicate_files logic to *path*.
+
+    mode values (from config/default):
+      'overwrite'  - return path unchanged (default, existing file is replaced)
+      'increment'  - if file exists, append -1, -2, ... before the extension
+                     e.g. nasa-123.png -> nasa-123-1.png -> nasa-123-2.png
+      'epoch'      - if file exists, append the current Unix epoch before the extension
+                     e.g. nasa-123.png -> nasa-123-1779464539.png
+    """
+    import time as _time
+    p = Path(path)
+    if mode == "overwrite" or not p.exists():
+        return path
+    stem = p.stem
+    suffix = p.suffix
+    parent = p.parent
+    if mode == "epoch":
+        new_path = parent / f"{stem}-{int(_time.time())}{suffix}"
+    else:  # increment
+        counter = 1
+        while True:
+            new_path = parent / f"{stem}-{counter}{suffix}"
+            if not new_path.exists():
+                break
+            counter += 1
+    return str(new_path)
+
+async def render_png(html, output_path, width=598, retina=True):
+    try:
+        from playwright.async_api import async_playwright
+    except ImportError:
+        sys.exit("Error: playwright is required for PNG rendering.\n"
+                 "Install it with: pip install playwright && playwright install chromium")
+    scale = 2 if retina else 1
+    async with async_playwright() as p:
+        browser = await p.chromium.launch(args=["--no-sandbox"])
+        context = await browser.new_context(
+            viewport={"width": width, "height": 800},
+            device_scale_factor=scale,
+        )
+        page = await context.new_page()
+        await page.set_content(html, wait_until="networkidle")
+        await asyncio.sleep(0.5)
+        thread = page.locator(".thread")
+        await thread.screenshot(path=output_path)
+        await browser.close()
 
 def embed_exif_url(output_path, url):
     """Inject tweet URL into EXIF ImageDescription. Supports JPEG and PNG.
@@ -2564,25 +2553,67 @@ def embed_exif_url(output_path, url):
     except Exception:
         pass  # Never fatal - EXIF is best-effort
 
-async def render_png(html, output_path, width=598, retina=True):
+def upload_imgur(path):
+    import uuid
+    client_id = os.environ.get("IMGUR_CLIENT_ID", "17385cf5260cef9")
+    with open(path, "rb") as f:
+        img_data = f.read()
+    boundary = uuid.uuid4().hex
+    body = (
+        f"--{boundary}\r\n"
+        f'Content-Disposition: form-data; name="image"; filename="{os.path.basename(path)}"\r\n'
+        f"Content-Type: image/png\r\n\r\n"
+    ).encode() + img_data + f"\r\n--{boundary}--\r\n".encode()
+    req = urllib.request.Request(
+        "https://api.imgur.com/3/image",
+        data=body,
+        headers={
+            "Authorization": f"Client-ID {client_id}",
+            "Content-Type": f"multipart/form-data; boundary={boundary}",
+        },
+    )
+    with urllib.request.urlopen(req) as r:
+        resp = json.loads(r.read())
+    url = resp["data"]["link"].replace("http://", "https://")
+    delete_hash = resp["data"]["deletehash"]
+    return url, delete_hash
+
+def open_with_viewer(path, viewer):
+    """Open *path* with the configured viewer command.
+
+    The viewer string may be:
+      - A plain command name / path, e.g. ``viewnior`` or ``eog``
+      - A command with a placeholder ``{}``, e.g. ``kitty +icat {}``
+      - Multiple words without ``{}``, in which case the file is appended, e.g.
+        ``firefox`` becomes ``firefox saved.html``
+
+    The process is launched detached (fire-and-forget for GUI apps) or
+    waited for in-place (terminal viewers such as ``kitty +icat``).
+    """
+    import shlex, subprocess
+    viewer = viewer.strip()
+    if "{}" in viewer:
+        cmd = shlex.split(viewer.replace("{}", shlex.quote(str(path))))
+    else:
+        cmd = shlex.split(viewer) + [str(path)]
+
+    # Terminal viewers (kitty +icat, chafa, viu, timg, etc) should run in-process so
+    # their output appears in the current terminal; GUI apps are detached.
+    terminal_hints = ("icat", "chafa", "viu", "catimg", "timg", "jp2a")
+    is_terminal = any(h in viewer for h in terminal_hints)
+
     try:
-        from playwright.async_api import async_playwright
-    except ImportError:
-        sys.exit("Error: playwright is required for PNG rendering.\n"
-                 "Install it with: pip install playwright && playwright install chromium")
-    scale = 2 if retina else 1
-    async with async_playwright() as p:
-        browser = await p.chromium.launch(args=["--no-sandbox"])
-        context = await browser.new_context(
-            viewport={"width": width, "height": 800},
-            device_scale_factor=scale,
-        )
-        page = await context.new_page()
-        await page.set_content(html, wait_until="networkidle")
-        await asyncio.sleep(0.5)
-        thread = page.locator(".thread")
-        await thread.screenshot(path=output_path)
-        await browser.close()
+        if is_terminal:
+            subprocess.run(cmd)
+        else:
+            # Detach: don't wait, don't tie stdout/stderr to this process
+            subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                             start_new_session=True)
+    except FileNotFoundError:
+        prog = cmd[0]
+        print(f"Warning: viewer '{prog}' not found in PATH - skipping open.", file=sys.stderr)
+    except Exception as e:
+        print(f"Warning: could not open viewer: {e}", file=sys.stderr)
 
 async def _main():
     # Pre-parse -c/--config before building the full parser so it can seed defaults.
@@ -2732,6 +2763,7 @@ async def _main():
 
     data = None
     headers = None
+    tweet_id = None
 
     if args.user:
         if args.guest:
@@ -2782,9 +2814,10 @@ async def _main():
         print(json.dumps(data, indent=2))
         return
 
-    fid = None
-    m = re.search(r"(\d+)", inp)
-    if m: fid = m.group(1)
+    fid = tweet_id
+    if not fid:
+        m = re.search(r"(\d+)", inp)
+        if m: fid = m.group(1)
 
     came_from_detail = "threaded_conversation_with_injections_v2" in data.get("data", {})
     if came_from_detail:
