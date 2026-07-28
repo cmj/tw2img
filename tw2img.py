@@ -1011,10 +1011,24 @@ def rel_time(created_at):
     if diff < 86400*7: return f"{diff//86400}d"
     return dt.strftime("%b %d, %Y")
 
+_LOCALTIME_MODE = None  # None | "append" | "replace"; set by --localtime / config localtime=
+
 def abs_time(created_at):
     if not created_at: return ""
-    dt = datetime.strptime(created_at, "%a %b %d %H:%M:%S +0000 %Y")
-    return dt.strftime("%b %d, %Y · %I:%M %p UTC").replace(" 0", " ")
+    dt = datetime.strptime(created_at, "%a %b %d %H:%M:%S +0000 %Y").replace(tzinfo=timezone.utc)
+    if _LOCALTIME_MODE == "replace":
+        local = dt.astimezone()
+        return local.strftime("%b %d, %Y · %I:%M %p %Z").replace(" 0", " ")
+    utc_str = dt.strftime("%b %d, %Y · %I:%M %p UTC").replace(" 0", " ")
+    if _LOCALTIME_MODE == "append":
+        local = dt.astimezone()
+        # Only prefix the local date if it differs from the UTC date (crossed midnight)
+        if local.date() != dt.date():
+            local_str = local.strftime("%b %d, %H:%M")
+        else:
+            local_str = local.strftime("%H:%M")
+        return f"{utc_str} ({local_str})"
+    return utc_str
 
 def format_tweet_line(tweet, nsfw=False, birdwatch=False):
     """Return a single summary line for a parsed tweet dict.
@@ -2714,6 +2728,14 @@ async def _main():
                    help="Append imgur URL + delete link to FILE after each upload (e.g. ~/tw2imgur_urls)")
     p.add_argument("--full-stats", action="store_true", default=_b("full_stats"),
                    help="Show full unabbreviated stat numbers (e.g. 12,345 instead of 12.3K)")
+    p.add_argument("--localtime",  nargs="?", const="append", choices=["append", "replace"],
+                   default=(conf.get("localtime").strip().lower() or None) if conf.get("localtime") else None,
+                   metavar="MODE",
+                   help="Show the system's local time on the focal tweet's date/time line. "
+                        "'append' (default if flag given with no value): keep 'MMM DD, YYYY · HH:MM AM/PM UTC' "
+                        "and add local time in parentheses, e.g. '(14:30)'. "
+                        "'replace': show only local date/time/timezone instead of UTC. "
+                        "Config key: localtime = append|replace")
     p.add_argument("--bird-icon",  action="store_true", default=_b("bird_icon"),
                    help="Show the classic Twitter 'bird' glyph in the header's top-right slot")
     p.add_argument("--trans",      default=conf.get("trans") or None, metavar="[SOURCE:]TARGET",
@@ -2755,6 +2777,15 @@ async def _main():
     # Apply bird-icon flag globally so tweet_row_html() picks it up
     global _BIRD_ICON
     _BIRD_ICON = args.bird_icon
+
+    # Apply localtime flag globally so abs_time() picks it up
+    global _LOCALTIME_MODE
+    if args.localtime and args.localtime not in ("append", "replace"):
+        print(f"Warning: invalid localtime value '{args.localtime}' (expected 'append' or 'replace'); ignoring.",
+              file=sys.stderr)
+        _LOCALTIME_MODE = None
+    else:
+        _LOCALTIME_MODE = args.localtime
 
     tweet_index = 1
     if args.input and re.fullmatch(r'@[A-Za-z0-9_]{1,15}', args.input):
