@@ -1578,7 +1578,7 @@ SHARED_CSS = """
 .quote-time { color: var(--grey); font-size:calc(13px * var(--fs)); margin-left: auto; }
 .quote-text { font-size:calc(14px * var(--fs)); line-height: 1.3em; white-space: pre-wrap; word-wrap: break-word; }
 .quote-media { margin: 6px -12px 0; overflow: hidden; border-radius: 0 0 10px 10px; }
-.quote-media > img { width: 100%; display: block; }
+.quote-media img { width: 100%; display: block; }
 .quote-media .video-wrap { max-height: 400px; background: #000; }
 .quote-media .video-wrap img { width: auto; height: auto; max-width: 100%; max-height: 400px; object-fit: contain; }
 .quote-media .video-wrap video { width: auto; height: auto; max-width: 100%; max-height: 400px; object-fit: contain; }
