@@ -744,7 +744,11 @@ def _parse_tweet_result(result, user_parser):
     )
 
     media_attr = None
-    is_ai_media = False
+    is_ai_media = bool(
+        (result.get("content_disclosure") or {})
+        .get("ai_generated_disclosure", {})
+        .get("has_ai_generated_media", False)
+    )
     for media_item in ext_entities.get("media", []):
         if media_item.get("grok_post_id"):
             is_ai_media = True
