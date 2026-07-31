@@ -1015,6 +1015,20 @@ def rel_time(created_at):
     if diff < 86400*7: return f"{diff//86400}d"
     return dt.strftime("%b %d, %Y")
 
+def rel_time_long(created_at):
+    """Human-readable relative time for --print-line, e.g. '45 minutes ago',
+    '3 hours ago', '2 days ago', or 'Jan 5, 2024' once it's a week+ old."""
+    if not created_at: return ""
+    dt   = datetime.strptime(created_at, "%a %b %d %H:%M:%S +0000 %Y").replace(tzinfo=timezone.utc)
+    diff = int((datetime.now(timezone.utc) - dt).total_seconds())
+    def _plural(n, unit):
+        return f"{n} {unit}{'s' if n != 1 else ''} ago"
+    if diff < 60:      return _plural(diff, "second")
+    if diff < 3600:    return _plural(diff // 60, "minute")
+    if diff < 86400:   return _plural(diff // 3600, "hour")
+    if diff < 86400*7: return _plural(diff // 86400, "day")
+    return dt.strftime("%b %d, %Y")
+
 _LOCALTIME_MODE = None  # None | "append" | "replace"; set by --localtime / config localtime=
 
 def abs_time(created_at):
@@ -1122,6 +1136,20 @@ def format_tweet_line(tweet, nsfw=False, birdwatch=False):
         plural = "s" if len(media_items) >= 2 else ""
         media_part = f" [{mtype}{plural}]"
 
+    media_urls_part = ""
+    if media_items:
+        urls = []
+        for m in media_items:
+            mtype = m.get("type", "photo")
+            if mtype in ("video", "animated_gif"):
+                vid_url = _best_video_url(m.get("video_info", {}))
+                urls.append(vid_url or m.get("media_url_https", ""))
+            else:
+                urls.append(m.get("media_url_https", ""))
+        urls = [u.split("?", 1)[0] for u in urls if u]
+        if urls:
+            media_urls_part = " " + " ".join(urls)
+
     replies = fmt(tweet.get("reply_count",   0))
     rts     = fmt(tweet.get("retweet_count", 0))
     quotes  = fmt(tweet.get("quote_count",   0))
@@ -1143,11 +1171,14 @@ def format_tweet_line(tweet, nsfw=False, birdwatch=False):
 
     sep = ": " if not badge else ""
     header = f"@{sn} ({name}){badge}{sep}"
-    body   = f"{text}{quoted_part}{media_part}"
+    body   = f"{text}{quoted_part}{media_part}{media_urls_part}"
     stats  = f"↳ {replies} ⇅ {rts} ‟ {quotes} ♥ {likes}{views_s}"
     footer = f"| {stats} | {source} {loc_part}{nsfw_part}{bw_part}| {url}"
 
-    return f"{header}{body} {footer}"
+    age = rel_time_long(tweet.get("created_at"))
+    age_part = f" ({age})" if age else ""
+
+    return f"{header}{body} {footer}{age_part}"
 
 # ---- link-building helpers: turn a screen_name/tweet_id into an <a href> under the configured nitter_url base (_TWEET_BASE_URL, above) ----
 
