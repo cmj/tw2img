@@ -1016,7 +1016,7 @@ def rel_time(created_at):
     return dt.strftime("%b %d, %Y")
 
 def rel_time_long(created_at):
-    """Human-readable relative time for --print-line, e.g. '45 minutes ago',
+    """Human-readable relative time for --print, e.g. '45 minutes ago',
     '3 hours ago', '2 days ago', or 'Jan 5, 2024' once it's a week+ old."""
     if not created_at: return ""
     dt   = datetime.strptime(created_at, "%a %b %d %H:%M:%S +0000 %Y").replace(tzinfo=timezone.utc)
@@ -1051,10 +1051,10 @@ def abs_time(created_at):
 def format_tweet_line(tweet, nsfw=False, birdwatch=False):
     """Return a single summary line for a parsed tweet dict.
 
-    Badge colour rules (ANSI bg/fg):
-      Business ✔    gold   bg=\033[43m  fg=\033[30m  (black on yellow)
-      Government ✔  teal  bg=\033[46m  fg=\033[30m  (black on cyan)
-      Blue ✔        blue  bg=\033[44m  fg=\033[97m  (white on blue)
+    Badge colour rules (ANSI fg only, applied to the ✓ glyph itself):
+      Business ✓    gold   fg=\033[93m
+      Government ✓  gray   fg=\033[90m
+      Blue ✓        blue   fg=\033[94m
       No badge      plain, no color
     """
     RESET  = "\033[0m"
@@ -1084,11 +1084,11 @@ def format_tweet_line(tweet, nsfw=False, birdwatch=False):
     # width for the checkmark with: kitty -o "narrow_symbols U+2714 1" (or set
     # in kitty config)
     if vtype == "Business":
-        badge = " \033[43m\033[30m✔\033[0m "   # black on yellow
+        badge = " \033[93m✓\033[0m "   # gold
     elif vtype == "Government":
-        badge = " \033[46m\033[30m✔\033[0m "   # black on cyan
+        badge = " \033[90m✓\033[0m "   # gray
     elif blue:
-        badge = " \033[44m\033[97m✔\033[0m "   # white on blue
+        badge = " \033[94m✓\033[0m "   # blue
     else:
         badge = " "
 
@@ -2757,7 +2757,7 @@ async def _main():
                         "Ignored if an explicit output path is given.")
     p.add_argument("--imgur",      action="store_true", default=_b("imgur"), help="Upload PNG to imgur after rendering")
     p.add_argument("--dump-json",  action="store_true", default=_b("dump_json"), help="Print raw API JSON to stdout and exit")
-    p.add_argument("--print-line", action="store_true", default=_b("print_line"),
+    p.add_argument("--print", action="store_true", default=_b("print"),
                    help="Print a one-line text summary of the focal tweet to stdout (implies no PNG unless other flags set)")
     p.add_argument("--imgur-log",  default=conf.get("imgur_log") or None, metavar="FILE",
                    help="Append imgur URL + delete link to FILE after each upload (e.g. ~/tw2imgur_urls)")
@@ -3028,7 +3028,7 @@ async def _main():
                     qt["translated_from"] = _lang_display_name(qt_src)
                 qt = qt.get("quoted")  # walk into a "quote of a quote", if any
 
-    if args.print_line:
+    if args.print:
         print(format_tweet_line(focal))
         return
 

@@ -91,8 +91,8 @@ tw2img @NASA --guest --view --viewer "kitty +icat {}"
 ## One-line text summary
 
 ```bash
-tw2img 21 --print-line --guest
-# @biz (Biz Stone) ✔ just setting up my twttr | ↳ 153 ⇅ 4.8K ‟ 302 ♥ 4.3K | Web Client | https://x.com/i/status/21
+tw2img 21 --print --guest
+# @biz (Biz Stone) ✓ just setting up my twttr | ↳ 153 ⇅ 4.8K ‟ 302 ♥ 4.3K | Web Client | https://x.com/i/status/21
 ```
 
 Prints to stdout and exits without rendering a PNG. Verification badges are ANSI-colourised (gold for Business, teal for Government, blue for X Blue).
