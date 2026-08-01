@@ -1105,9 +1105,9 @@ def format_tweet_line(tweet, nsfw=False, birdwatch=False):
     for url in media_urls:
         text = text.replace(url, "")
 
-    text = re.sub(r"  +", " ", text).strip()
     text = text.replace("&amp;", "&").replace("&gt;", ">").replace("&lt;", "<")
     text = re.sub(r"\\n\\n|\\n|\n\n|\n", " ", text)
+    text = re.sub(r"  +", " ", text).strip()
 
     quoted_part = ""
     qt = tweet.get("quoted")
@@ -1124,9 +1124,9 @@ def format_tweet_line(tweet, nsfw=False, birdwatch=False):
                 qt_text = qt_text.replace(u["url"], u.get("expanded_url", u["url"]))
         for url in qt_media_urls:
             qt_text = qt_text.replace(url, "")
-        qt_text = re.sub(r"  +", " ", qt_text).strip()
         qt_text = qt_text.replace("&amp;", "&").replace("&gt;", ">").replace("&lt;", "<")
         qt_text = re.sub(r"\\n\\n|\\n|\n\n|\n", " ", qt_text)
+        qt_text = re.sub(r"  +", " ", qt_text).strip()
         quoted_part = f" [@{qt_sn}] {qt_text}"
 
     media_items = ext_entities.get("media", [])
@@ -1155,7 +1155,7 @@ def format_tweet_line(tweet, nsfw=False, birdwatch=False):
     quotes  = fmt(tweet.get("quote_count",   0))
     likes   = fmt(tweet.get("like_count",    0))
     views   = tweet.get("view_count")
-    views_s = f" 🡕 {fmt(views)}" if views else ""
+    views_s = f" ↗ {fmt(views)}" if views else ""
 
     source = tweet.get("source", "")
 
@@ -1172,7 +1172,7 @@ def format_tweet_line(tweet, nsfw=False, birdwatch=False):
     sep = ": " if not badge else ""
     header = f"@{sn} ({name}){badge}{sep}"
     body   = f"{text}{quoted_part}{media_part}{media_urls_part}"
-    stats  = f"↳ {replies} ⇅ {rts} ‟ {quotes} ♥ {likes}{views_s}"
+    stats  = f"↳ {replies} ↻ {rts} ‟ {quotes} ♡︎ {likes}{views_s}" # some terms and irc apps colorize ♥ 
     footer = f"| {stats} | {source} {loc_part}{nsfw_part}{bw_part}| {url}"
 
     age = rel_time_long(tweet.get("created_at"))
