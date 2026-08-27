@@ -100,6 +100,7 @@ USER_BY_SCREEN_NAME_URL        = "https://x.com/i/api/graphql/laYnJPCAcVo0o6pzcn
 USER_TWEETS_URL                = "https://x.com/i/api/graphql/fgsimYxdCfQmTI_dtJsTXw/UserTweets"
 USER_TWEETS_AND_REPLIES_URL    = "https://x.com/i/api/graphql/xdqXQQg4vOBF9Np6VtUsdw/UserTweetsAndReplies"
 BIRDWATCH_FETCH_NOTES_URL      = "https://x.com/i/api/graphql/3G9Ms1POEEiF86dFhV-tTg/BirdwatchFetchNotes"
+SEARCH_TIMELINE_URL            = "https://x.com/i/api/graphql/hyPfJYJ_XAtDYoslQc-Rgg/SearchTimeline"
 GUEST_TOKEN_URL                = "https://api.twitter.com/1.1/guest/activate.json"
 
 # Base URL used when building @mention / #hashtag / tweet hyperlinks.
@@ -222,6 +223,32 @@ USER_TWEETS_AND_REPLIES_FEAT = {"rweb_video_screen_enabled": False, "rweb_cashta
     "content_disclosure_indicator_enabled": True, "content_disclosure_ai_generated_indicator_enabled": True,
     "responsive_web_grok_show_grok_translated_post": True, "responsive_web_grok_analysis_button_from_backend": True,
     "post_ctas_fetch_enabled": True, "freedom_of_speech_not_reach_fetch_enabled": True,
+    "standardized_nudges_misinfo": True,
+    "tweet_with_visibility_results_prefer_gql_limited_actions_policy_enabled": True,
+    "longform_notetweets_rich_text_read_enabled": True, "longform_notetweets_inline_media_enabled": False,
+    "responsive_web_grok_image_annotation_enabled": True, "responsive_web_grok_imagine_annotation_enabled": True,
+    "responsive_web_grok_community_note_auto_translation_is_enabled": True,
+    "responsive_web_enhance_cards_enabled": False}
+
+SEARCH_TIMELINE_FEAT = {"rweb_video_screen_enabled": False, "rweb_cashtags_enabled": True,
+    "profile_label_improvements_pcf_label_in_post_enabled": True,
+    "responsive_web_profile_redirect_enabled": True, "rweb_tipjar_consumption_enabled": False,
+    "verified_phone_label_enabled": False, "creator_subscriptions_tweet_preview_api_enabled": True,
+    "responsive_web_graphql_timeline_navigation_enabled": True,
+    "premium_content_api_read_enabled": False, "communities_web_enable_tweet_community_results_fetch": True,
+    "c9s_tweet_anatomy_moderator_badge_enabled": True,
+    "responsive_web_grok_analyze_button_fetch_trends_enabled": False,
+    "responsive_web_grok_analyze_post_followups_enabled": True,
+    "rweb_cashtags_composer_attachment_enabled": True, "responsive_web_jetfuel_frame": True,
+    "responsive_web_grok_share_attachment_enabled": True, "responsive_web_grok_annotations_enabled": True,
+    "articles_preview_enabled": True, "responsive_web_edit_tweet_api_enabled": True,
+    "rweb_conversational_replies_downvote_enabled": False,
+    "graphql_is_translatable_rweb_tweet_is_translatable_enabled": True,
+    "view_counts_everywhere_api_enabled": True, "longform_notetweets_consumption_enabled": True,
+    "responsive_web_twitter_article_tweet_consumption_enabled": True,
+    "content_disclosure_indicator_enabled": True, "content_disclosure_ai_generated_indicator_enabled": True,
+    "responsive_web_grok_show_grok_translated_post": True, "responsive_web_grok_analysis_button_from_backend": True,
+    "post_ctas_fetch_enabled": False, "freedom_of_speech_not_reach_fetch_enabled": True,
     "standardized_nudges_misinfo": True,
     "tweet_with_visibility_results_prefer_gql_limited_actions_policy_enabled": True,
     "longform_notetweets_rich_text_read_enabled": True, "longform_notetweets_inline_media_enabled": False,
@@ -393,6 +420,94 @@ def fetch_nth_tweet_id(user_id, headers, n=1, with_replies=True):
                 return hits[-1]
 
     return hits[-1] if hits else None
+
+def _search_timeline_entry_tweets(entry):
+    """Yield every raw tweet 'result' dict inside a single SearchTimeline
+    entry. A plain 'tweet-<id>' entry (TimelineTimelineItem) yields itself.
+    A 'search-conversation-...' entry (TimelineTimelineModule) bundles an
+    entire reply thread and yields every tweet in it -- which can include
+    tweets from OTHER users, since X groups a matching reply together with
+    the rest of its conversation. Callers must filter by author."""
+    content = entry.get("content", {})
+    typename = content.get("__typename")
+    if typename == "TimelineTimelineItem":
+        result = (content.get("itemContent", {})
+                          .get("tweet_results", {}).get("result", {}))
+        if result:
+            yield result
+    elif typename == "TimelineTimelineModule":
+        for item in content.get("items", []):
+            result = (item.get("item", {}).get("itemContent", {})
+                          .get("tweet_results", {}).get("result", {}))
+            if result:
+                yield result
+
+def fetch_nth_tweet_id_via_search(screen_name, headers, n=1, with_replies=True):
+    """Return the Nth-most-recent tweet (1-based) authored by @screen_name,
+    found via the SearchTimeline endpoint (query 'from:<screen_name>')
+    instead of UserTweets/UserTweetsAndReplies. Used when MASTER_TOKEN is
+    set, since it doesn't need the numeric user id first.
+
+    SearchTimeline entries aren't already in clean per-author chronological
+    order the way a UserTweets page is: a 'search-conversation' entry bundles
+    a whole reply thread (including tweets by other users in that thread),
+    and even with product=Latest the top-level entry order can't be fully
+    trusted. So this walks every entry (unwrapping conversation modules),
+    keeps only tweets actually authored by screen_name, and then sorts by
+    the tweet's own numeric id (Twitter/X ids are chronological Snowflake
+    ids) to determine true recency, rather than relying on list position.
+
+    Skips RTs always; skips the user's own replies too unless
+    with_replies=True."""
+    variables = {"rawQuery": f"from:{screen_name}", "count": 20,
+                 "querySource": "typed_query", "product": "Latest",
+                 "withGrokTranslatedBio": True,
+                 "withQuickPromoteEligibilityTweetFields": False}
+    headers = dict(headers, Authorization=f"Bearer {MASTER_TOKEN or BEARER2}")
+    data = _req(SEARCH_TIMELINE_URL, headers, {
+        "variables": json.dumps(variables),
+        "features":  json.dumps(SEARCH_TIMELINE_FEAT),
+    })
+    instructions = data["data"]["search_by_raw_query"]["search_timeline"]["timeline"]["instructions"]
+
+    target = screen_name.lstrip("@").lower()
+    seen = {}  # rest_id -> int(rest_id), deduped (same tweet can appear twice:
+               # once as its own entry, once inside a conversation module)
+
+    for instr in instructions:
+        if instr.get("type") != "TimelineAddEntries":
+            continue
+        for entry in instr.get("entries", []):
+            for result in _search_timeline_entry_tweets(entry):
+                # unwrap TweetWithVisibilityResults-style wrappers
+                if "tweet" in result and not result.get("legacy"):
+                    result = result["tweet"]
+                leg = result.get("legacy", {})
+                if not leg:
+                    continue
+                author = (result.get("core", {}).get("user_results", {})
+                                .get("result", {}).get("core", {})
+                                .get("screen_name", "")).lower()
+                if author != target:
+                    continue
+                if leg.get("retweeted_status_id_str"):
+                    continue
+                if not with_replies and leg.get("in_reply_to_status_id_str"):
+                    continue
+                rest_id = result.get("rest_id") or leg.get("id_str")
+                if not rest_id or rest_id in seen:
+                    continue
+                try:
+                    seen[rest_id] = int(rest_id)
+                except ValueError:
+                    continue
+
+    if not seen:
+        return None
+    ordered = sorted(seen.items(), key=lambda kv: kv[1], reverse=True)
+    if n > len(ordered):
+        return None
+    return ordered[n - 1][0]
 
 def _quote_chain_has_stub(qt):
     while qt:
@@ -2847,11 +2962,23 @@ async def _main():
             if not args.auth_token or not args.csrf_token:
                 sys.exit("Error: --auth-token/--csrf-token required (or use --guest)")
             headers = auth_headers(args.auth_token, args.csrf_token)
-        user_id = fetch_user_id(args.user, headers)
         # UserTweetsAndReplies requires auth; fall back to UserTweets in guest
         # mode, unless MASTER_TOKEN is set (which covers the endpoint directly).
         use_with_replies = args.with_replies and (not args.guest or bool(MASTER_TOKEN))
-        tweet_id = fetch_nth_tweet_id(user_id, headers, n=tweet_index, with_replies=use_with_replies)
+        tweet_id = None
+        if MASTER_TOKEN:
+            # SearchTimeline's Latest feed is strict reverse-chronological
+            # with no pinned-tweet reordering, so it's the more reliable way
+            # to find the actual latest tweet -- use it directly instead of
+            # UserTweets/UserTweetsAndReplies, which need the numeric user id.
+            try:
+                tweet_id = fetch_nth_tweet_id_via_search(args.user, headers, n=tweet_index, with_replies=use_with_replies)
+            except Exception as e:
+                if not args.quiet:
+                    print(f"Warning: SearchTimeline lookup failed ({e}); falling back to UserTweets.", file=sys.stderr)
+        if not tweet_id:
+            user_id = fetch_user_id(args.user, headers)
+            tweet_id = fetch_nth_tweet_id(user_id, headers, n=tweet_index, with_replies=use_with_replies)
         if not tweet_id:
             sys.exit(f"Error: no suitable tweet found for @{args.user}")
         if args.guest and not MASTER_TOKEN:
