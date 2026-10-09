@@ -53,7 +53,7 @@ Config file (INI format, [tw2img] section):
       (no --view, no --imgur, no explicit output path), Playwright is not required.
 """
 
-import sys, json, re, os, argparse, asyncio, tempfile, urllib.request, urllib.parse, configparser, struct
+import sys, json, re, os, argparse, asyncio, tempfile, urllib.request, urllib.parse, urllib.error, configparser, struct
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -1809,7 +1809,7 @@ SHARED_CSS = """
 .tweet-row.top-reply { padding-top: 10px; }
 """
 
-# ---- translation ('Translated from ...' banner + Google Translate calls) ----
+# ---- translation ('Translated from ...' banner + X's Grok translation endpoint) ----
 
 _LANG_NAMES = {
     "af": "Afrikaans", "sq": "Albanian", "am": "Amharic", "ar": "Arabic",
@@ -1853,53 +1853,49 @@ def _lang_display_name(code):
     primary = code.split("-")[0].lower()
     return _LANG_NAMES.get(primary, code)
 
-# deep-translator's GoogleTranslator backend is case-sensitive (rejects "EN",
-# only accepts "en") and a handful of codes don't match ISO 639-1/BCP-47 at
-# all: bare "zh" is rejected (only the region-qualified "zh-CN"/"zh-TW"
-# work), and Hebrew/Javanese still use old codes ("iw"/"jw") rather than the
-# modern ones ("he"/"jv") that X's API and most of the world use. X also still
-# reports Indonesian as the deprecated "in".
-_GTRANS_LANG_FIXUPS = {
-    "zh": "zh-CN", "zh-cn": "zh-CN", "zh-hans": "zh-CN", "zh-sg": "zh-CN",
-    "zh-tw": "zh-TW", "zh-hant": "zh-TW", "zh-hk": "zh-TW", "zh-mo": "zh-TW",
-    "he": "iw", "jv": "jw", "in": "id",
-}
+TRANSLATION_URL = "https://api.x.com/2/grok/translation.json"
 
-def _gtrans_lang(code):
-    """Map a language code to the exact form GoogleTranslator (deep-translator)
-    expects. See _GTRANS_LANG_FIXUPS for why this is needed."""
-    if not code:
-        return code
-    low = code.strip().lower()
-    if low == "auto":
-        return "auto"
-    return _GTRANS_LANG_FIXUPS.get(low, low)
+def translate_post(post_id, dst_lang, auth_token, csrf_token):
+    """Translate a post via X's own Grok translation endpoint.
 
-def translate_text(text, source_lang, target_lang):
-    """Translate *text* from *source_lang* to *target_lang* using deep-translator.
+    The endpoint translates by post id (not raw text) and requires a logged-in
+    session (auth_token + ct0), so it can't be used with --guest.  There is no
+    source-language parameter; X detects it server-side.
 
-    Lazily imports deep-translator so it is not a hard requirement.
-    Install with: pip install deep-translator
-
-    Returns the translated string, or the original text on any error.
-    source_lang / target_lang use BCP-47 / ISO 639-1 codes (e.g. 'ja', 'en', 'auto').
-    Pass source_lang='auto' to let the library detect the language.
+    Returns the translated string, or None on any failure (so the caller can
+    keep the original text and skip the 'Translated from' label).
     """
+    body = json.dumps({"content_type": "POST", "id": str(post_id),
+                       "dst_lang": (dst_lang or "en").strip()}).encode()
+    headers = dict(auth_headers(auth_token, csrf_token),
+                   **{"Content-Type": "text/plain;charset=UTF-8",
+                      "Origin": "https://x.com"})
+    req = urllib.request.Request(TRANSLATION_URL, data=body, headers=headers, method="POST")
     try:
-        from deep_translator import GoogleTranslator
-    except ImportError:
-        sys.exit(
-            "Error: deep-translator is required for translation.\n"
-            "Install it with: pip install deep-translator"
-        )
-    try:
-        src = _gtrans_lang(source_lang)
-        tgt = _gtrans_lang(target_lang)
-        translated = GoogleTranslator(source=src, target=tgt).translate(text)
-        return translated or text
+        with urllib.request.urlopen(req, timeout=30) as r:
+            data = json.loads(r.read())
+    except urllib.error.HTTPError as e:
+        detail = ""
+        try:
+            detail = e.read().decode("utf-8", "replace")[:300]
+        except Exception:
+            pass
+        print(f"Warning: translation of {post_id} failed (HTTP {e.code}) {detail}", file=sys.stderr)
+        return None
     except Exception as e:
-        print(f"Warning: translation failed ({e}), using original text.", file=sys.stderr)
-        return text
+        print(f"Warning: translation of {post_id} failed ({e}).", file=sys.stderr)
+        return None
+    text = ((data or {}).get("result") or {}).get("text")
+    if not text:
+        print(f"Warning: no translation returned for {post_id}: {str(data)[:300]}", file=sys.stderr)
+        return None
+    return text
+
+def _from_label(src_lang):
+    """Display name for the 'Translated from X' banner."""
+    if not src_lang or src_lang == "auto":
+        return "another language"
+    return _lang_display_name(src_lang)
 
 def _trans_label_html(lang_name):
     """Return a tiny 'Translated from X' label in accent colour, or empty string."""
@@ -2894,10 +2890,11 @@ async def _main():
     p.add_argument("--bird-icon",  action="store_true", default=_b("bird_icon"),
                    help="Show the classic Twitter 'bird' glyph in the header's top-right slot")
     p.add_argument("--trans",      default=conf.get("trans") or None, metavar="[SOURCE:]TARGET",
-                   help="Translate tweet text before rendering. "
-                        "Format: TARGET (e.g. --trans en) to auto-detect source, or "
-                        "SOURCE:TARGET (e.g. --trans ja:en) to specify both. "
-                        "Uses deep-translator (pip install deep-translator). "
+                   help="Translate tweet text before rendering using X's Grok translation "
+                        "endpoint (requires --auth-token/--csrf-token; not available with --guest). "
+                        "Format: TARGET (e.g. --trans en), or SOURCE:TARGET (e.g. --trans ja:en); "
+                        "X detects the source itself; SOURCE is only used for the 'Translated from' "
+                        "label (tweets already in the target language are skipped). "
                         "Examples: --trans en  |  --trans ja:en  |  --trans auto:fr")
     p.add_argument("--auth-token", default=conf.get("auth_token") or os.environ.get("TWITTER_AUTH_TOKEN"), help="or use envar TWITTER_AUTH_TOKEN")
     p.add_argument("--csrf-token", default=conf.get("csrf_token") or os.environ.get("TWITTER_CSRF_TOKEN"), help="or use envar TWITTER_CSRF_TOKEN")
@@ -3121,14 +3118,33 @@ async def _main():
             src_lang, tgt_lang = raw.split(":", 1)
         else:
             src_lang, tgt_lang = "auto", raw
-        if tgt_lang.strip().lower() == "auto":
+        src_lang, tgt_lang = src_lang.strip(), tgt_lang.strip()
+        if tgt_lang.lower() == "auto":
             sys.exit(
                 "Error: --trans target language can't be 'auto' -- only the "
                 "source can be auto-detected, not the target. Use a real "
                 "target code, e.g. --trans en, or be explicit about both "
                 "with --trans auto:en."
             )
+        if args.guest or not (args.auth_token and args.csrf_token):
+            sys.exit(
+                "Error: --trans uses X's translation endpoint, which needs a logged-in "
+                "session. Provide --auth-token/--csrf-token (or TWITTER_AUTH_TOKEN / "
+                "TWITTER_CSRF_TOKEN) and don't use --guest."
+            )
         tgt_primary = tgt_lang.split("-")[0].lower()
+
+        def _translate_node(node, label_src):
+            """Translate node['full_text'] in place via post id; label on success."""
+            if not node.get("id"):
+                return
+            if not args.quiet:
+                print(f"Translating post {node['id']} ({label_src} -> {tgt_lang}) ...", file=sys.stderr)
+            out = translate_post(node["id"], tgt_lang, args.auth_token, args.csrf_token)
+            if out:
+                node["full_text"] = out
+                node["translated_from"] = _from_label(label_src)
+
         for t in tweets:
             if t.get("__tombstone"):
                 continue
@@ -3140,24 +3156,15 @@ async def _main():
                 pass  # untranslatable Twitter-specific lang code; skip, but still check quoted below
             elif tweet_lang and tweet_lang == tgt_primary:
                 pass  # don't translate, but still check quoted below
-            else:
-                effective_src = src_lang if src_lang != "auto" else (tweet_lang or "auto")
-                if t.get("full_text"):
-                    if not args.quiet:
-                        print(f"Translating tweet text ({effective_src} -> {tgt_lang}) ...", file=sys.stderr)
-                    t["full_text"] = translate_text(t["full_text"], effective_src, tgt_lang)
-                    t["translated_from"] = _lang_display_name(effective_src)
+            elif t.get("full_text"):
+                _translate_node(t, src_lang if src_lang.lower() != "auto" else (tweet_lang or "auto"))
             qt = t.get("quoted")
             while qt and not qt.get("__tombstone") and not qt.get("__stub") and qt.get("full_text"):
                 qt_lang = (qt.get("lang") or "").split("-")[0].lower()
                 if qt_lang in _UNTRANSLATABLE_LANGS:
                     pass  # untranslatable Twitter-specific lang code; skip
                 elif not qt_lang or qt_lang != tgt_primary:
-                    qt_src = src_lang if src_lang != "auto" else (qt_lang or "auto")
-                    if not args.quiet:
-                        print(f"Translating quoted tweet text ({qt_src} -> {tgt_lang}) ...", file=sys.stderr)
-                    qt["full_text"] = translate_text(qt["full_text"], qt_src, tgt_lang)
-                    qt["translated_from"] = _lang_display_name(qt_src)
+                    _translate_node(qt, src_lang if src_lang.lower() != "auto" else (qt_lang or "auto"))
                 qt = qt.get("quoted")  # walk into a "quote of a quote", if any
 
     if args.print:
