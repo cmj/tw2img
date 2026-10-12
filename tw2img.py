@@ -770,6 +770,7 @@ def _parse_tweet_result(result, user_parser):
     bw = result.get("birdwatch_pivot") or {}
     bw_note = bw.get("note", {}).get("text") or bw.get("subtitle", {}).get("text") or ""
     bw_ents = bw.get("note", {}).get("entities") or bw.get("subtitle", {}).get("entities") or []
+    bw_note_id = str((bw.get("note") or {}).get("rest_id") or "")
     # has_birdwatch_notes: true in TweetResultByRestId (guest) and TweetDetail when
     # the tweet has any Community Note activity (proposed or shown).
     has_birdwatch_notes = bool(result.get("has_birdwatch_notes")) or bool(bw)
@@ -968,6 +969,7 @@ def _parse_tweet_result(result, user_parser):
         "card":            card,
         "poll":            poll,
         "birdwatch":       bw_note,
+        "birdwatch_id":    bw_note_id,
         "birdwatch_ents":  bw_ents,
         "has_birdwatch_notes": has_birdwatch_notes,
         "broadcast_card":  broadcast_card,
@@ -1102,6 +1104,7 @@ def parse_birdwatch_fetch_notes(data):
         for n in (result.get(group) or {}).get("notes", []):
             summary = (n.get("data_v1") or {}).get("summary", {})
             out.append({
+                "id":            str(n.get("rest_id") or n.get("id") or n.get("note_id") or ""),
                 "text":          summary.get("text", ""),
                 "entities":      summary.get("entities", []),
                 "rating_status": n.get("rating_status", ""),
@@ -1855,25 +1858,57 @@ def _lang_display_name(code):
 
 TRANSLATION_URL = "https://api.x.com/2/grok/translation.json"
 
-def translate_post(post_id, dst_lang, auth_token, csrf_token):
-    """Translate a post via X's own Grok translation endpoint.
+def _parse_translation_response(raw, expand=True):
+    """Parse the translation endpoint body. It is either one JSON object (cached
+    translation) or newline-delimited JSON (fresh Grok translation)"""
+    objs = []
+    body = raw.decode("utf-8", "replace") if isinstance(raw, bytes) else raw
+    for line in body.splitlines():
+        line = re.sub(r"^data: ?", "", line.strip())
+        if not line:
+            continue
+        try:
+            objs.append(json.loads(line))
+        except ValueError:
+            pass
+    if not objs:  # a single pretty-printed (multi-line) JSON object
+        try:
+            objs = [json.loads(body)]
+        except ValueError:
+            return ""
+    results = [(o.get("result") or {}) for o in objs if isinstance(o, dict)]
+    text = "".join(r.get("text") or "" for r in results)
+    if expand:
+        for r in results:
+            for e in r.get("rich_text_entities") or []:
+                ref = e.get("ref") or {}
+                if ref.get("url") and ref.get("expandedUrl"):
+                    text = text.replace(ref["url"], ref["expandedUrl"])
+    return text
 
-    The endpoint translates by post id (not raw text) and requires a logged-in
+def translate_post(post_id, dst_lang, auth_token, csrf_token,
+                   content_type="POST", expand=True):
+    """Translate a post or Community Note via X's own Grok translation endpoint.
+
+    content_type is "POST" (id = tweet id) or "COMMUNITY_NOTE" (id = note id).
+    The endpoint translates by id (not raw text) and requires a logged-in
     session (auth_token + ct0), so it can't be used with --guest.  There is no
-    source-language parameter; X detects it server-side.
+    source-language parameter; X detects it server-side.  The endpoint returns
+    a cached translation if one exists, otherwise streams a fresh one; both are
+    handled by _parse_translation_response.
 
     Returns the translated string, or None on any failure (so the caller can
     keep the original text and skip the 'Translated from' label).
     """
-    body = json.dumps({"content_type": "POST", "id": str(post_id),
+    body = json.dumps({"content_type": content_type, "id": str(post_id),
                        "dst_lang": (dst_lang or "en").strip()}).encode()
     headers = dict(auth_headers(auth_token, csrf_token),
                    **{"Content-Type": "text/plain;charset=UTF-8",
                       "Origin": "https://x.com"})
     req = urllib.request.Request(TRANSLATION_URL, data=body, headers=headers, method="POST")
     try:
-        with urllib.request.urlopen(req, timeout=30) as r:
-            data = json.loads(r.read())
+        with urllib.request.urlopen(req, timeout=60) as r:
+            raw = r.read()
     except urllib.error.HTTPError as e:
         detail = ""
         try:
@@ -1885,11 +1920,16 @@ def translate_post(post_id, dst_lang, auth_token, csrf_token):
     except Exception as e:
         print(f"Warning: translation of {post_id} failed ({e}).", file=sys.stderr)
         return None
-    text = ((data or {}).get("result") or {}).get("text")
+    text = _parse_translation_response(raw, expand=expand)
     if not text:
-        print(f"Warning: no translation returned for {post_id}: {str(data)[:300]}", file=sys.stderr)
+        print(f"Warning: no translation returned for {post_id}: {raw[:300]!r}", file=sys.stderr)
         return None
     return text
+
+def translate_note(note_id, dst_lang, auth_token, csrf_token, expand=True):
+    """Translate a Community Note by its note id (see translate_post)."""
+    return translate_post(note_id, dst_lang, auth_token, csrf_token,
+                          content_type="COMMUNITY_NOTE", expand=expand)
 
 def _from_label(src_lang):
     """Display name for the 'Translated from X' banner."""
@@ -1907,7 +1947,7 @@ def _trans_label_html(lang_name):
         f'Translated from {lang_name}</div>'
     )
 
-def _birdwatch_note_html(text, entities, shown=True, is_misleading=True):
+def _birdwatch_note_html(text, entities, shown=True, is_misleading=True, translated_from=None):
     ents = [e for e in entities if e.get("fromIndex") is not None and e.get("toIndex") is not None]
     ents.sort(key=lambda e: e["fromIndex"], reverse=True)
     for e in ents:
@@ -1935,17 +1975,21 @@ def _birdwatch_note_html(text, entities, shown=True, is_misleading=True):
     cls = "birdwatch" if shown else "birdwatch proposed"
     return f'''<div class="{cls}">
           <div class="community-note-header"><span class="icon-container">{icon_svg("group", 13, "var(--accent)")}</span> {label}</div>
-          <div class="community-note-text">{text}</div>
+          <div class="community-note-text">{_trans_label_html(translated_from)}{text}</div>
         </div>'''
 
 def _birdwatch_html(t):
     parts = []
     if t.get("birdwatch"):
-        parts.append(_birdwatch_note_html(t["birdwatch"], t.get("birdwatch_ents", []), shown=True))
+        parts.append(_birdwatch_note_html(t.get("birdwatch_trans") or t["birdwatch"],
+                                          [] if t.get("birdwatch_trans") else t.get("birdwatch_ents", []),
+                                          shown=True, translated_from=t.get("birdwatch_trans_from")))
     for n in t.get("proposed_notes") or []:
         if n["shown"] and n["text"] == t.get("birdwatch"):
             continue  # same note X already surfaces via birdwatch_pivot, don't duplicate
-        parts.append(_birdwatch_note_html(n["text"], n["entities"], shown=n["shown"], is_misleading=n["is_misleading"]))
+        parts.append(_birdwatch_note_html(n.get("trans") or n["text"], [] if n.get("trans") else n["entities"],
+                                          shown=n["shown"], is_misleading=n["is_misleading"],
+                                          translated_from=n.get("trans_from")))
     return "".join(parts)
 
 def quote_block_html(qt, depth=0):
@@ -3166,6 +3210,44 @@ async def _main():
                 elif not qt_lang or qt_lang != tgt_primary:
                     _translate_node(qt, src_lang if src_lang.lower() != "auto" else (qt_lang or "auto"))
                 qt = qt.get("quoted")  # walk into a "quote of a quote", if any
+
+        # Community Notes: BirdwatchFetchNotes / birdwatch_pivot carry no translation,
+        # so do one extra COMMUNITY_NOTE fetch per note. Notes have no lang field;
+        # if the endpoint hands back identical text it was already in the target
+        # language, so no label is added.
+        def _translate_note_text(text, note_id, node_lang=None):
+            if not (text and note_id):
+                return None, None
+            if not args.quiet:
+                print(f"Translating community note {note_id} (-> {tgt_lang}) ...", file=sys.stderr)
+            out = translate_note(note_id, tgt_lang, args.auth_token, args.csrf_token)
+            if out and out.strip() != text.strip():
+                _nl = (node_lang or "").split("-")[0].lower()
+                if src_lang.lower() != "auto":
+                    _src = src_lang
+                elif _nl and _nl not in _UNTRANSLATABLE_LANGS:
+                    _src = _nl  # notes carry no lang; assume the post's
+                else:
+                    _src = "auto"
+                return out, _from_label(_src)
+            return None, None
+
+        for t in tweets:
+            if t.get("__tombstone"):
+                continue
+            nodes, qt = [t], t.get("quoted")
+            while qt and not qt.get("__tombstone") and not qt.get("__stub"):
+                nodes.append(qt)
+                qt = qt.get("quoted")
+            for node in nodes:
+                if node.get("birdwatch") and node.get("birdwatch_id"):
+                    node["birdwatch_trans"], node["birdwatch_trans_from"] = \
+                        _translate_note_text(node["birdwatch"], node["birdwatch_id"], node.get("lang"))
+                for n in node.get("proposed_notes") or []:
+                    if n["shown"] and n["text"] == node.get("birdwatch"):
+                        n["trans"], n["trans_from"] = node.get("birdwatch_trans"), node.get("birdwatch_trans_from")
+                    else:
+                        n["trans"], n["trans_from"] = _translate_note_text(n["text"], n.get("id"), node.get("lang"))
 
     if args.print:
         print(format_tweet_line(focal))
