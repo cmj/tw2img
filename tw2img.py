@@ -102,6 +102,10 @@ USER_TWEETS_AND_REPLIES_URL    = "https://x.com/i/api/graphql/xdqXQQg4vOBF9Np6Vt
 BIRDWATCH_FETCH_NOTES_URL      = "https://x.com/i/api/graphql/3G9Ms1POEEiF86dFhV-tTg/BirdwatchFetchNotes"
 SEARCH_TIMELINE_URL            = "https://x.com/i/api/graphql/hyPfJYJ_XAtDYoslQc-Rgg/SearchTimeline"
 GUEST_TOKEN_URL                = "https://api.twitter.com/1.1/guest/activate.json"
+LEGACY_CONVERSATION_URL        = "https://api.twitter.com/2/timeline/conversation/{}.json"
+LEGACY_CONVERSATION_PARAMS     = {"include_reply_count": "true", "cards_platform": "Web-13",
+    "include_entities": "1", "include_user_entities": "1", "include_cards": "1",
+    "send_error_codes": "1", "tweet_mode": "extended", "include_ext_alt_text": "true"}
 
 # Base URL used when building @mention / #hashtag / tweet hyperlinks.
 # Override via config: nitter_url = https://nitter.example.com
@@ -339,6 +343,24 @@ def fetch_birdwatch_notes(tweet_id, headers):
         "variables": json.dumps({"tweet_id": tweet_id}),
         "features":  json.dumps(BIRDWATCH_FETCH_NOTES_FEAT),
     })
+
+def fetch_legacy_sources(tweet_id, headers, count=1):
+    params = dict(LEGACY_CONVERSATION_PARAMS, count=max(1, int(count)))
+    data = _req(LEGACY_CONVERSATION_URL.format(tweet_id), headers, params)
+    out = {}
+    for tid, t in ((data.get("globalObjects") or {}).get("tweets") or {}).items():
+        src = _clean_source(t.get("source"))
+        if src:
+            out[str(tid)] = src
+    return out
+
+def apply_legacy_sources(tweets, sources):
+    for t in tweets:
+        if not t or t.get("__tombstone"):
+            continue
+        src = sources.get(str(t.get("id")))
+        if src:
+            t["source"] = src
 
 def fetch_user_id(screen_name, headers):
     ubsn_headers = dict(headers)
@@ -2882,6 +2904,8 @@ async def _main():
                    help="Fetch the top-voted MISLEADING Community Note via BirdwatchFetchNotes, even if not yet shown on Twitter (labelled 'Proposed' if so)")
     p.add_argument("--with-notes", action="store_true", default=_b("with_notes"),
                    help="Like --with-note, but show every proposed Community Note (misleading and not-misleading) for the tweet")
+    p.add_argument("--no-legacy-source", action="store_true", default=_b("no_legacy_source"),
+                   help="Skip the extra legacy-endpoint request used to fetch source labels (iPhone, Web App, etc)")
     p.add_argument("--no-retina",  action="store_true", default=_b("no_retina"), help="Generate a 50%% smaller image")
     p.add_argument("--guest",      action="store_true", default=_b("guest"), help="Guest mode (no account needed)")
     p.add_argument("--with-replies", action=argparse.BooleanOptionalAction,
@@ -3248,6 +3272,19 @@ async def _main():
                         n["trans"], n["trans_from"] = node.get("birdwatch_trans"), node.get("birdwatch_trans_from")
                     else:
                         n["trans"], n["trans_from"] = _translate_note_text(n["text"], n.get("id"), node.get("lang"))
+
+    # Source labels ("Twitter for iPhone") are missing from the modern API, so
+    # backfill them with one extra request to the legacy conversation endpoint.
+    # count is bumped to cover any --top-reply/--top-replies being rendered.
+    if not (args.no_source and not args.print) and not args.no_legacy_source:
+        _lheaders = resolution_headers(args, headers)
+        if _lheaders and tweet_id != "unknown":
+            try:
+                _lsrc = fetch_legacy_sources(tweet_id, _lheaders, count=max(1, _tr_count))
+                apply_legacy_sources(tweets + top_reply_tweets, _lsrc)
+            except Exception as e:
+                if not args.quiet:
+                    print(f"Warning: couldn't fetch legacy source labels for {tweet_id}: {e}", file=sys.stderr)
 
     if args.print:
         print(format_tweet_line(focal))
