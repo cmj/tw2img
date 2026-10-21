@@ -1797,7 +1797,8 @@ SHARED_CSS = """
 .birdwatch.proposed { border-style: dashed; opacity: 0.92; }
 .community-note-header { background-color: var(--bg-hover); font-weight: 700; font-size:calc(13px * var(--fs)); padding: 6px 10px 8px; display: flex; align-items: center; gap: 12px; color: var(--fg); }
 .community-note-header .icon-container { flex-shrink: 0; color: var(--accent); }
-.community-note-text { font-size:calc(13px * var(--fs)); color: var(--fg); white-space: pre-line; padding: 6px 10px 10px; }
+.community-note-text { font-size:calc(13px * var(--fs)); color: var(--fg); white-space: pre-line; padding: 6px 10px 10px; overflow-wrap: anywhere; }
+.community-note-text a { color: var(--link); text-decoration: none; }
 .card { border: 1px solid var(--border); border-radius: 10px; margin: 6px 0; overflow: hidden; display: flex; flex-direction: column; }
 .card-img { width: 100%; display: block; max-height: 220px; object-fit: cover; }
 .card-body { padding: 8px 12px 10px; }
@@ -1981,13 +1982,17 @@ def _birdwatch_note_html(text, entities, shown=True, is_misleading=True, transla
             text = text[:start] + text[end:]
             continue
         if href:
-            text = text[:start] + f'<a href="{display}">{display}</a>' + text[end:]
+            text = text[:start] + f'<a href="{href}">{display}</a>' + text[end:]
+    text = re.sub(r'(?<![">])(https?://[^\s<]+)', r'<a href="\1">\1</a>', text)
     # Birdwatch entity lists only carry TimelineUrl entries; bare @mentions
     # and #hashtags in note text are untracked, so linkify them here using
     # the same base URL as the main tweet body.
     if _TWEET_BASE_URL:
-        text = re.sub(r"@(\w+)", lambda m: f'<a href="{_TWEET_BASE_URL}/{m.group(1)}">@{m.group(1)}</a>', text)
-        text = re.sub(r"#(\w+)", lambda m: f'<a href="{_TWEET_BASE_URL}/hashtag/{m.group(1)}">#{m.group(1)}</a>', text)
+        def _mention_tags(seg):
+            seg = re.sub(r"@(\w+)", lambda m: f'<a href="{_TWEET_BASE_URL}/{m.group(1)}">@{m.group(1)}</a>', seg)
+            return re.sub(r"#(\w+)", lambda m: f'<a href="{_TWEET_BASE_URL}/hashtag/{m.group(1)}">#{m.group(1)}</a>', seg)
+        text = "".join(seg if seg.startswith("<a ") else _mention_tags(seg)
+                       for seg in re.split(r"(<a .*?</a>)", text, flags=re.S))
     if shown:
         label = "Community Note"
     elif is_misleading:
@@ -3239,13 +3244,18 @@ async def _main():
         # so do one extra COMMUNITY_NOTE fetch per note. Notes have no lang field;
         # if the endpoint hands back identical text it was already in the target
         # language, so no label is added.
+        def _note_norm(s):
+            s = re.sub(r"https?://\S+", " ", s or "")
+            s = re.sub(r"\S+…", " ", s)
+            return re.sub(r"\s+", " ", s).strip().casefold()
+
         def _translate_note_text(text, note_id, node_lang=None):
             if not (text and note_id):
                 return None, None
             if not args.quiet:
                 print(f"Translating community note {note_id} (-> {tgt_lang}) ...", file=sys.stderr)
             out = translate_note(note_id, tgt_lang, args.auth_token, args.csrf_token)
-            if out and out.strip() != text.strip():
+            if out and _note_norm(out) != _note_norm(text):
                 _nl = (node_lang or "").split("-")[0].lower()
                 if src_lang.lower() != "auto":
                     _src = src_lang
