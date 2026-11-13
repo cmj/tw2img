@@ -102,7 +102,7 @@ USER_TWEETS_AND_REPLIES_URL    = "https://x.com/i/api/graphql/xdqXQQg4vOBF9Np6Vt
 BIRDWATCH_FETCH_NOTES_URL      = "https://x.com/i/api/graphql/3G9Ms1POEEiF86dFhV-tTg/BirdwatchFetchNotes"
 SEARCH_TIMELINE_URL            = "https://x.com/i/api/graphql/hyPfJYJ_XAtDYoslQc-Rgg/SearchTimeline"
 GUEST_TOKEN_URL                = "https://api.twitter.com/1.1/guest/activate.json"
-LEGACY_CONVERSATION_URL        = "https://api.twitter.com/2/timeline/conversation/{}.json"
+LEGACY_CONVERSATION_URL        = "https://x.com/i/api/2/timeline/conversation/{}.json"
 LEGACY_CONVERSATION_PARAMS     = {"include_reply_count": "true", "cards_platform": "Web-13",
     "include_entities": "1", "include_user_entities": "1", "include_cards": "1",
     "send_error_codes": "1", "tweet_mode": "extended", "include_ext_alt_text": "true"}
@@ -1534,7 +1534,21 @@ def media_html(ext_entities, is_ai=False):
     ) if is_ai else ""
 
     n = len(parts)
-    if n == 5:
+    if n >= 6:
+        n_rows = -(-n // 10)
+        per_row = -(-n // n_rows)
+        rows = []
+        for r in range(n_rows):
+            lo, hi = r * per_row, min((r + 1) * per_row, n)
+            cols = _ar_cols(aspects[lo:hi])
+            cells = "".join(f'<div class="grid-item">{p}</div>' for p in parts[lo:hi])
+            row_ar = sum(aspects[lo:hi])
+            rows.append(
+                f'<div class="media-grid-row" style="display:grid;grid-template-columns:{cols};gap:3px;aspect-ratio:{row_ar:.4f};">'
+                f'{cells}</div>'
+            )
+        grid = f'<div class="media-grid-multi">{"".join(rows)}</div>'
+    elif n == 5:
         top_cols = _ar_cols(aspects[0:2])
         bot_cols = _ar_cols(aspects[2:5])
         grid = (
@@ -1747,6 +1761,15 @@ SHARED_CSS = """
 .media-grid-3 { display: flex; flex-direction: column; gap: 3px; margin: 6px 0; border-radius: 10px; overflow: hidden; }
 .media-grid-3 .grid-item { position: relative; overflow: hidden; }
 .media-grid-3 .grid-item img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.media-grid-multi { display: flex; flex-direction: column; gap: 3px; margin: 6px 0; border-radius: 10px; overflow: hidden; }
+.media-grid-multi .grid-item { position: relative; overflow: hidden; min-width: 0; }
+.media-grid-multi .media-grid-row { grid-template-rows: minmax(0, 1fr); }
+.media-grid-multi .grid-item .attachment { position: absolute; inset: 0; }
+.media-grid-multi .grid-item .media-link { position: absolute; inset: 0; }
+.media-grid-multi .grid-item img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; display: block; }
+.media-grid-multi .video-wrap { max-height: none; }
+.media-grid-multi .play-overlay svg { width: 24px; height: 24px; }
+.media-grid-multi .vid-duration { display: none; }
 .media-grid-5 { display: flex; flex-direction: column; gap: 3px; margin: 6px 0; border-radius: 10px; overflow: hidden; }
 .media-grid-5 .grid-item { position: relative; overflow: hidden; }
 .media-grid-5 .grid-item img { width: 100%; height: 100%; object-fit: cover; display: block; }
