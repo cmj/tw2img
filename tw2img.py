@@ -102,10 +102,12 @@ USER_TWEETS_AND_REPLIES_URL    = "https://x.com/i/api/graphql/xdqXQQg4vOBF9Np6Vt
 BIRDWATCH_FETCH_NOTES_URL      = "https://x.com/i/api/graphql/3G9Ms1POEEiF86dFhV-tTg/BirdwatchFetchNotes"
 SEARCH_TIMELINE_URL            = "https://x.com/i/api/graphql/hyPfJYJ_XAtDYoslQc-Rgg/SearchTimeline"
 GUEST_TOKEN_URL                = "https://api.twitter.com/1.1/guest/activate.json"
-LEGACY_CONVERSATION_URL        = "https://x.com/i/api/2/timeline/conversation/{}.json"
-LEGACY_CONVERSATION_PARAMS     = {"include_reply_count": "true", "cards_platform": "Web-13",
-    "include_entities": "1", "include_user_entities": "1", "include_cards": "1",
-    "send_error_codes": "1", "tweet_mode": "extended", "include_ext_alt_text": "true"}
+# DISABLED: X removed the legacy timeline/conversation endpoint, so source labels
+# can no longer be fetched. Code kept for future reference.
+# LEGACY_CONVERSATION_URL        = "https://x.com/i/api/2/timeline/conversation/{}.json"
+# LEGACY_CONVERSATION_PARAMS     = {"include_reply_count": "true", "cards_platform": "Web-13",
+#     "include_entities": "1", "include_user_entities": "1", "include_cards": "1",
+#     "send_error_codes": "1", "tweet_mode": "extended", "include_ext_alt_text": "true"}
 
 # Base URL used when building @mention / #hashtag / tweet hyperlinks.
 # Override via config: nitter_url = https://nitter.example.com
@@ -344,23 +346,24 @@ def fetch_birdwatch_notes(tweet_id, headers):
         "features":  json.dumps(BIRDWATCH_FETCH_NOTES_FEAT),
     })
 
-def fetch_legacy_sources(tweet_id, headers, count=1):
-    params = dict(LEGACY_CONVERSATION_PARAMS, count=max(1, int(count)))
-    data = _req(LEGACY_CONVERSATION_URL.format(tweet_id), headers, params)
-    out = {}
-    for tid, t in ((data.get("globalObjects") or {}).get("tweets") or {}).items():
-        src = _clean_source(t.get("source"))
-        if src:
-            out[str(tid)] = src
-    return out
-
-def apply_legacy_sources(tweets, sources):
-    for t in tweets:
-        if not t or t.get("__tombstone"):
-            continue
-        src = sources.get(str(t.get("id")))
-        if src:
-            t["source"] = src
+# DISABLED: legacy timeline/conversation endpoint was removed by X. Kept for reference.
+# def fetch_legacy_sources(tweet_id, headers, count=1):
+#     params = dict(LEGACY_CONVERSATION_PARAMS, count=max(1, int(count)))
+#     data = _req(LEGACY_CONVERSATION_URL.format(tweet_id), headers, params)
+#     out = {}
+#     for tid, t in ((data.get("globalObjects") or {}).get("tweets") or {}).items():
+#         src = _clean_source(t.get("source"))
+#         if src:
+#             out[str(tid)] = src
+#     return out
+#
+# def apply_legacy_sources(tweets, sources):
+#     for t in tweets:
+#         if not t or t.get("__tombstone"):
+#             continue
+#         src = sources.get(str(t.get("id")))
+#         if src:
+#             t["source"] = src
 
 def fetch_user_id(screen_name, headers):
     ubsn_headers = dict(headers)
@@ -1493,7 +1496,7 @@ def _ar_cols(aspects):
     total = sum(aspects)
     return " ".join(f"{a/total:.4f}fr" for a in aspects)
 
-def media_html(ext_entities, is_ai=False):
+def media_html(ext_entities, is_ai=False, max_per_row=10):
     import html as _html
     media_list = ext_entities.get("media", [])
     if not media_list:
@@ -1535,7 +1538,7 @@ def media_html(ext_entities, is_ai=False):
 
     n = len(parts)
     if n >= 6:
-        n_rows = -(-n // 10)
+        n_rows = max(2, -(-n // max_per_row))
         per_row = -(-n // n_rows)
         rows = []
         for r in range(n_rows):
@@ -1802,6 +1805,7 @@ SHARED_CSS = """
 .quote-media .media-row { margin: 0; border-radius: 0; }
 .quote-media .media-grid-2x2 { margin: 0; border-radius: 0; }
 .quote-media .media-grid-3 { margin: 0; border-radius: 0; }
+.quote-media .media-grid-multi { margin: 0; border-radius: 0; }
 .quote-card { margin: 6px -12px 0; overflow: hidden; border-radius: 0 0 10px 10px; }
 .quote-card .card { border: none; border-radius: 0; margin: 0; }
 /* "Quote of a quote": a smaller quote-block nested inside another one */
@@ -2102,7 +2106,7 @@ def quote_block_html(qt, depth=0):
                     f'<img src="{m["media_url_https"]}"></a></div>'
                 )
         else:
-            media = f'<div class="quote-media">{media_html(qt["ext_entities"])}</div>'
+            media = f'<div class="quote-media">{media_html(qt["ext_entities"], max_per_row=5)}</div>'
     has_media_cls = " has-media" if media else ""
     qcard = ""
     if not media and qt.get("card"):
@@ -2933,7 +2937,7 @@ async def _main():
     p.add_argument("--with-notes", action="store_true", default=_b("with_notes"),
                    help="Like --with-note, but show every proposed Community Note (misleading and not-misleading) for the tweet")
     p.add_argument("--no-legacy-source", action="store_true", default=_b("no_legacy_source"),
-                   help="Skip the extra legacy-endpoint request used to fetch source labels (iPhone, Web App, etc)")
+                   help="No-op: the legacy source-label request is disabled (endpoint removed by X). Accepted for compatibility")
     p.add_argument("--no-retina",  action="store_true", default=_b("no_retina"), help="Generate a 50%% smaller image")
     p.add_argument("--guest",      action="store_true", default=_b("guest"), help="Guest mode (no account needed)")
     p.add_argument("--with-replies", action=argparse.BooleanOptionalAction,
@@ -3309,15 +3313,17 @@ async def _main():
     # Source labels ("Twitter for iPhone") are missing from the modern API, so
     # backfill them with one extra request to the legacy conversation endpoint.
     # count is bumped to cover any --top-reply/--top-replies being rendered.
-    if not (args.no_source and not args.print) and not args.no_legacy_source:
-        _lheaders = resolution_headers(args, headers)
-        if _lheaders and tweet_id != "unknown":
-            try:
-                _lsrc = fetch_legacy_sources(tweet_id, _lheaders, count=max(1, _tr_count))
-                apply_legacy_sources(tweets + top_reply_tweets, _lsrc)
-            except Exception as e:
-                if not args.quiet:
-                    print(f"Warning: couldn't fetch legacy source labels for {tweet_id}: {e}", file=sys.stderr)
+    # DISABLED: X removed the legacy timeline/conversation endpoint, so this
+    # second request no longer works. Kept for future reference.
+    # if not (args.no_source and not args.print) and not args.no_legacy_source:
+    #     _lheaders = resolution_headers(args, headers)
+    #     if _lheaders and tweet_id != "unknown":
+    #         try:
+    #             _lsrc = fetch_legacy_sources(tweet_id, _lheaders, count=max(1, _tr_count))
+    #             apply_legacy_sources(tweets + top_reply_tweets, _lsrc)
+    #         except Exception as e:
+    #             if not args.quiet:
+    #                 print(f"Warning: couldn't fetch legacy source labels for {tweet_id}: {e}", file=sys.stderr)
 
     if args.print:
         print(format_tweet_line(focal))
